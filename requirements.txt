@@ -1,3 +1,19 @@
-pystray
-pillow
-tk 
+# Z-Waifu Launcher GUI Requirements
+# Core dependencies for the launcher application
+
+# Process management and system utilities
+psutil>=5.8.0
+
+# GUI and image handling
+Pillow>=8.0.0
+
+# System tray support
+pystray>=0.19.0
+
+# Optional: For enhanced terminal support (if needed)
+# colorama>=0.4.4
+
+# Development dependencies (optional)
+# pytest>=6.0.0
+# black>=21.0.0
+# flake8>=3.8.0 

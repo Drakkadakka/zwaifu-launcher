@@ -1,0 +1,22 @@
+{
+  "ooba_bat": "D:\\ZWAIFU-PROJECT\\text-generation-webui-main\\start_windows.bat",
+  "zwaifu_bat": "D:\\ZWAIFU-PROJECT\\z-waif-1.14-R4\\startup.bat",
+  "ollama_enabled": false,
+  "ollama_bat": null,
+  "rvc_enabled": false,
+  "rvc_host": "127.0.0.1",
+  "rvc_port": "7897",
+  "rvc_model": "default",
+  "rvc_speaker": "0",
+  "rvc_pitch": "0.0",
+  "rvc_speed": "1.0",
+  "rvc_bat": null,
+  "theme": "light",
+  "port": "5000",
+  "auto_start_ooba": false,
+  "auto_start_zwaifu": false,
+  "auto_start_ollama": false,
+  "auto_start_rvc": false,
+  "ooba_port": "7860",
+  "zwaifu_port": "5000"
+}
