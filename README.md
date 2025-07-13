@@ -1,4 +1,4 @@
-# Z-Waifu Launcher
+# Z Launcher
 
 A powerful Python GUI launcher for managing Oobabooga, Z-Waifu, Ooba-LLaMA, and RVC processes with advanced features, dark/light mode, and system tray support.
 
@@ -6,12 +6,33 @@ A powerful Python GUI launcher for managing Oobabooga, Z-Waifu, Ooba-LLaMA, and 
 
 ## Features
 - Multi-tab GUI for process management
-- Real-time output and logging
-- System tray integration
+- **Per-process controls:** Start/Stop/Restart for Oobabooga, Z-Waifu, Ooba-LLaMA, and RVC
+- **Status indicators:** See if each process is Running, Stopped, or Error
+- **Auto-detection of batch files:** Finds Oobabooga and Z-Waifu batch files on first run
+- **Port checks:** Warns if the selected port is already in use
+- **Enhanced log viewer:** Refresh/Clear buttons, shows only the last 200 lines for performance
+- **Settings persistence:** Remembers theme, batch file paths, port, and more
+- **Graceful shutdown:** Prompts to stop all running processes on exit
+- **User-friendly error dialogs:** Clear messages for missing files, port issues, and process errors
+- **Clickable About links:** GitHub and email links are clickable in the About tab
+- **Robust error handling:** All file and process operations are safe and logged
 - Dark mode and light mode toggle
 - Batch file auto-detection and configuration
 - Custom arguments and settings
-- Robust error handling
+- Real-time output and logging
+
+---
+
+## What's New
+- Per-process Start/Stop/Restart controls and status indicators
+- Auto-detection of batch files on first run
+- Port availability check before launching Oobabooga
+- Enhanced log viewer (Refresh/Clear, last 200 lines)
+- Settings persistence for all user preferences
+- Graceful shutdown with process stop prompt
+- User-friendly error dialogs for common issues
+- Clickable About tab links
+- Robust error handling and error logging
 
 ---
 

@@ -1,0 +1,52 @@
+Z Launcher - Changelog
+======================
+
+NEW FEATURES & IMPROVEMENTS (v1.0.0):
+-------------------------------------
+- Per-process Start/Stop/Restart controls and status indicators
+- Auto-detection of batch files on first run
+- Port availability check before launching Oobabooga
+- Enhanced log viewer (Refresh/Clear, last 200 lines)
+- Settings persistence for all user preferences
+- Graceful shutdown with process stop prompt
+- User-friendly error dialogs for common issues
+- Clickable About tab links
+- Robust error handling and error logging
+
+Version 1.0.0 (2025-01-XX)
+--------------------------
+Initial Release
+
+FEATURES:
+- Multi-tab GUI interface
+- Oobabooga process management
+- Z-Waifu process management  
+- Ooba-LLaMA process management
+- RVC process management
+- Real-time output logging
+- System tray integration
+- Dark mode and light mode themes
+- Batch file auto-detection
+- Configuration saving/loading
+- Error handling and logging
+- Virtual environment auto-setup
+
+TECHNICAL:
+- Python 3.8+ compatibility
+- tkinter GUI framework
+- pystray for system tray
+- PIL/Pillow for image handling
+- JSON configuration storage
+- Subprocess management
+- Threading for non-blocking operations
+
+KNOWN ISSUES:
+- None at this time
+
+PLANNED FEATURES:
+- CMD_FLAGS.txt editor
+- Advanced logging options
+- Process monitoring
+- Auto-restart capabilities
+- Custom themes
+- Plugin system 
