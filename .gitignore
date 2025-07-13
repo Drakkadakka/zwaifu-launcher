@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+logs/*.log
+data/*.log
+*.log
+
+# Database
+data/analytics.db
+*.db
+
+# Configuration (keep template)
+config/launcher_config.json
+config/project_config.json
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# AI Models (large files)
+models/
+*.gguf
+*.bin
+*.safetensors
+
+# Generated files
+mobile_qr.png
+launcher_icon.png

@@ -1,25 +1,36 @@
 @echo off
-title Z-Waifu Launcher GUI
-echo Starting Z-Waifu Launcher GUI...
+echo Z-Waifu Launcher
+echo ================
 echo.
 
-REM Check if Python is available
+REM Check if Python is installed
 python --version >nul 2>&1
 if errorlevel 1 (
-    echo Error: Python is not installed or not in PATH
-    echo Please install Python 3.7+ from https://www.python.org/downloads/
-    echo Make sure to check "Add Python to PATH" during installation
+    echo ERROR: Python is not installed or not in PATH
+    echo Please install Python 3.7 or higher from https://python.org
     pause
     exit /b 1
 )
 
-REM Run the launcher
-echo Launching launcher...
-python launch_launcher.py
+echo Python found. Starting launcher...
+echo.
 
-REM If there was an error, pause to show the message
-if errorlevel 1 (
-    echo.
-    echo Launcher exited with an error. Check the messages above.
-    pause
-) 
+REM Check if virtual environment exists
+if exist "venv\Scripts\python.exe" (
+    echo Using existing virtual environment...
+    call venv\Scripts\activate.bat
+    python zwaifu_launcher_gui.py
+) else (
+    echo No virtual environment found. Creating one...
+    python -m venv venv
+    call venv\Scripts\activate.bat
+    echo Installing dependencies...
+    python -m pip install --upgrade pip
+    python -m pip install -r config\requirements.txt
+    echo Starting launcher...
+    python zwaifu_launcher_gui.py
+)
+
+echo.
+echo Launcher finished.
+pause 

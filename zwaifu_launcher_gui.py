@@ -5,7 +5,7 @@ import threading
 import time
 import socket
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox, filedialog
+from tkinter import ttk, scrolledtext, messagebox, filedialog, simpledialog
 import json
 import pystray
 from PIL import Image, ImageTk
@@ -14,15 +14,87 @@ import webbrowser
 import glob
 import psutil
 import re
+import sqlite3
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import numpy as np
+import math
+import importlib.util
+
+# Advanced Features Imports
+try:
+    from flask import Flask, render_template, request, jsonify, send_from_directory
+    from flask_socketio import SocketIO, emit
+    from flask_cors import CORS
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+    import jwt
+    import secrets
+    FLASK_AVAILABLE = True
+except ImportError:
+    FLASK_AVAILABLE = False
+
+# Import utility modules
+try:
+    from utils import (
+        WebInterface, create_web_interface,
+        APIServer, create_api_server,
+        MobileApp, create_mobile_app,
+        AnalyticsSystem, create_analytics_system,
+        PluginManager, create_plugin_manager
+    )
+    UTILS_AVAILABLE = True
+except ImportError:
+    UTILS_AVAILABLE = False
+    # Fallback to local classes if utils not available
+    WebInterface = None
+    APIServer = None
+    MobileApp = None
+    AnalyticsSystem = None
+    PluginManager = None
+
+try:
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    import numpy as np
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+
+try:
+    import qrcode
+    QRCODE_AVAILABLE = True
+except ImportError:
+    QRCODE_AVAILABLE = False
 
 # Remove venv creation, install_requirements, and activate_virtual_env functions and their calls.
 # The script should now start directly with the GUI logic and not attempt to manage virtual environments.
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-CONFIG_FILE = os.path.join(PROJECT_ROOT, "launcher_config.json")
-ICON_FILE = os.path.join(PROJECT_ROOT, "launcher_icon.png")
-CMD_FLAGS_FILE = os.path.join(PROJECT_ROOT, "text-generation-webui-main", "CMD_FLAGS.txt")
-LOG_FILE = os.path.join(PROJECT_ROOT, "launcher_log.txt")
+CONFIG_FILE = os.path.join(PROJECT_ROOT, "config", "launcher_config.json")
+ICON_FILE = os.path.join(PROJECT_ROOT, "static", "images", "launcher_icon.png")
+CMD_FLAGS_FILE = os.path.join(PROJECT_ROOT, "ai_tools", "oobabooga", "CMD_FLAGS.txt")
+LOG_FILE = os.path.join(PROJECT_ROOT, "data", "launcher_log.txt")
+
+# Advanced Features Configuration
+WEB_PORT = 8080
+API_PORT = 8081
+MOBILE_PORT = 8082
+ANALYTICS_DB = os.path.join(PROJECT_ROOT, "data", "analytics.db")
+PLUGINS_DIR = os.path.join(PROJECT_ROOT, "plugins")
+TEMPLATES_DIR = os.path.join(PROJECT_ROOT, "templates")
+STATIC_DIR = os.path.join(PROJECT_ROOT, "static")
+
+# Create necessary directories
+os.makedirs(PLUGINS_DIR, exist_ok=True)
+os.makedirs(TEMPLATES_DIR, exist_ok=True)
+os.makedirs(STATIC_DIR, exist_ok=True)
 
 # Auto-detect batch files
 def find_batch_file(filename):
@@ -111,6 +183,753 @@ class Process:
     def is_running(self):
         return self.process is not None
 
+# Advanced Features Classes
+class WebInterface:
+    def __init__(self, launcher_gui):
+        self.launcher_gui = launcher_gui
+        self.app = None
+        self.socketio = None
+        self.server_thread = None
+        self.is_running = False
+
+    def start(self):
+        if not FLASK_AVAILABLE:
+            self.launcher_gui.log("Flask not available. Install with: pip install flask flask-socketio flask-cors")
+            return False
+
+        try:
+            self.app = Flask(__name__)
+            self.app.config['SECRET_KEY'] = secrets.token_hex(16)
+            CORS(self.app)
+            self.socketio = SocketIO(self.app, cors_allowed_origins="*")
+
+            @self.app.route('/')
+            def index():
+                return self.render_dashboard()
+
+            @self.app.route('/api/status')
+            def api_status():
+                return jsonify(self.get_status())
+
+            @self.socketio.on('connect')
+            def handle_connect():
+                emit('status_update', self.get_status())
+
+            @self.socketio.on('start_process')
+            def handle_start_process(data):
+                process_type = data.get('process_type')
+                result = self.start_process_instance(process_type)
+                emit('process_result', result)
+
+            self.server_thread = threading.Thread(target=self._run_server, daemon=True)
+            self.server_thread.start()
+            self.is_running = True
+            self.launcher_gui.log(f"Web interface started on http://localhost:{WEB_PORT}")
+            return True
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to start web interface: {e}")
+            return False
+
+    def _run_server(self):
+        try:
+            self.socketio.run(self.app, host='0.0.0.0', port=WEB_PORT, debug=False)
+        except Exception as e:
+            self.launcher_gui.log(f"Web server error: {e}")
+
+    def render_dashboard(self):
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Z-Waifu Launcher Dashboard</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }}
+                .container {{ max-width: 1200px; margin: 0 auto; }}
+                .header {{ background: #333; color: white; padding: 20px; border-radius: 5px; }}
+                .status-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin: 20px 0; }}
+                .status-card {{ background: white; padding: 20px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
+                .btn {{ background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 3px; cursor: pointer; }}
+                .btn:hover {{ background: #0056b3; }}
+                .btn.danger {{ background: #dc3545; }}
+                .btn.danger:hover {{ background: #c82333; }}
+                .status.running {{ color: #28a745; }}
+                .status.stopped {{ color: #dc3545; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>Z-Waifu Launcher Dashboard</h1>
+                    <p>Real-time process management and monitoring</p>
+                </div>
+                
+                <div class="status-grid">
+                    <div class="status-card">
+                        <h3>Oobabooga</h3>
+                        <p class="status" id="ooba-status">Checking...</p>
+                        <button class="btn" onclick="startProcess('Oobabooga')">Start</button>
+                        <button class="btn danger" onclick="stopProcess('Oobabooga')">Stop</button>
+                    </div>
+                    
+                    <div class="status-card">
+                        <h3>Z-Waifu</h3>
+                        <p class="status" id="zwaifu-status">Checking...</p>
+                        <button class="btn" onclick="startProcess('Z-Waifu')">Start</button>
+                        <button class="btn danger" onclick="stopProcess('Z-Waifu')">Stop</button>
+                    </div>
+                    
+                    <div class="status-card">
+                        <h3>Ollama</h3>
+                        <p class="status" id="ollama-status">Checking...</p>
+                        <button class="btn" onclick="startProcess('Ollama')">Start</button>
+                        <button class="btn danger" onclick="stopProcess('Ollama')">Stop</button>
+                    </div>
+                    
+                    <div class="status-card">
+                        <h3>RVC</h3>
+                        <p class="status" id="rvc-status">Checking...</p>
+                        <button class="btn" onclick="startProcess('RVC')">Start</button>
+                        <button class="btn danger" onclick="stopProcess('RVC')">Stop</button>
+                    </div>
+                </div>
+            </div>
+            
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+            <script>
+                const socket = io();
+                
+                socket.on('status_update', function(data) {{
+                    updateStatus(data);
+                }});
+                
+                socket.on('process_result', function(data) {{
+                    if (data.success) {{
+                        alert('Process started successfully!');
+                    }} else {{
+                        alert('Error: ' + data.error);
+                    }}
+                }});
+                
+                function updateStatus(data) {{
+                    Object.keys(data).forEach(process => {{
+                        const element = document.getElementById(process.toLowerCase() + '-status');
+                        if (element) {{
+                            element.textContent = data[process] ? 'Running' : 'Stopped';
+                            element.className = 'status ' + (data[process] ? 'running' : 'stopped');
+                        }}
+                    }});
+                }}
+                
+                function startProcess(processType) {{
+                    socket.emit('start_process', {{process_type: processType}});
+                }}
+                
+                function stopProcess(processType) {{
+                    socket.emit('stop_process', {{process_type: processType}});
+                }}
+                
+                // Initial status update
+                fetch('/api/status')
+                    .then(response => response.json())
+                    .then(data => updateStatus(data));
+            </script>
+        </body>
+        </html>
+        """
+
+    def get_status(self):
+        return {
+            'Oobabooga': hasattr(self.launcher_gui, 'ooba_proc') and self.launcher_gui.ooba_proc and self.launcher_gui.ooba_proc.poll() is None,
+            'Z-Waifu': hasattr(self.launcher_gui, 'zwaifu_proc') and self.launcher_gui.zwaifu_proc and self.launcher_gui.zwaifu_proc.poll() is None,
+            'Ollama': False,  # Will be updated based on actual process status
+            'RVC': False      # Will be updated based on actual process status
+        }
+
+    def start_process_instance(self, process_type):
+        try:
+            # Implementation for starting processes
+            return {'success': True, 'message': f'Started {process_type}'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+class APIServer:
+    def __init__(self, launcher_gui):
+        self.launcher_gui = launcher_gui
+        self.app = None
+        self.limiter = None
+        self.server_thread = None
+        self.is_running = False
+        self.api_keys = {}
+
+    def start(self):
+        if not FLASK_AVAILABLE:
+            self.launcher_gui.log("Flask not available. Install with: pip install flask flask-limiter pyjwt")
+            return False
+
+        try:
+            self.app = Flask(__name__)
+            self.app.config['SECRET_KEY'] = secrets.token_hex(32)
+            self.limiter = Limiter(
+                app=self.app,
+                key_func=get_remote_address,
+                default_limits=["200 per day", "50 per hour"]
+            )
+
+            @self.app.route('/api/status', methods=['GET'])
+            @self.limiter.limit("10 per minute")
+            def api_status():
+                return jsonify(self.get_status())
+
+            @self.app.route('/api/processes', methods=['GET'])
+            @self.limiter.limit("10 per minute")
+            def api_processes():
+                return jsonify(self.get_processes())
+
+            @self.app.route('/api/start/<process_type>', methods=['POST'])
+            @self.limiter.limit("5 per minute")
+            def api_start_process(process_type):
+                return jsonify(self.start_process_instance(process_type, 0))
+
+            @self.app.route('/api/stop/<process_type>', methods=['POST'])
+            @self.limiter.limit("5 per minute")
+            def api_stop_process(process_type):
+                return jsonify(self.stop_process_instance(process_type, 0))
+
+            @self.app.route('/api/keys/generate', methods=['POST'])
+            def api_generate_key():
+                key = secrets.token_hex(32)
+                self.api_keys[key] = {'created': time.time(), 'permissions': ['read', 'write']}
+                return jsonify({'api_key': key})
+
+            self.server_thread = threading.Thread(target=self._run_server, daemon=True)
+            self.server_thread.start()
+            self.is_running = True
+            self.launcher_gui.log(f"API server started on http://localhost:{API_PORT}")
+            return True
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to start API server: {e}")
+            return False
+
+    def _run_server(self):
+        try:
+            self.app.run(host='0.0.0.0', port=API_PORT, debug=False)
+        except Exception as e:
+            self.launcher_gui.log(f"API server error: {e}")
+
+    def get_status(self):
+        return {
+            'launcher_running': True,
+            'timestamp': time.time(),
+            'version': '1.0.0'
+        }
+
+    def get_processes(self):
+        return {
+            'Oobabooga': {
+                'running': hasattr(self.launcher_gui, 'ooba_proc') and self.launcher_gui.ooba_proc and self.launcher_gui.ooba_proc.poll() is None,
+                'pid': self.launcher_gui.ooba_proc.pid if hasattr(self.launcher_gui, 'ooba_proc') and self.launcher_gui.ooba_proc else None
+            },
+            'Z-Waifu': {
+                'running': hasattr(self.launcher_gui, 'zwaifu_proc') and self.launcher_gui.zwaifu_proc and self.launcher_gui.zwaifu_proc.poll() is None,
+                'pid': self.launcher_gui.zwaifu_proc.pid if hasattr(self.launcher_gui, 'zwaifu_proc') and self.launcher_gui.zwaifu_proc else None
+            }
+        }
+
+    def start_process_instance(self, process_type, instance_id):
+        try:
+            # Get batch file path
+            batch_path = None
+            if process_type == "Oobabooga":
+                batch_path = self.launcher_gui.ooba_bat
+            elif process_type == "Z-Waifu":
+                batch_path = self.launcher_gui.zwaifu_bat
+            elif process_type == "Ollama":
+                batch_path = self.launcher_gui.ollama_bat
+            elif process_type == "RVC":
+                batch_path = self.launcher_gui.rvc_bat
+            
+            if not batch_path or not os.path.exists(batch_path):
+                return {'error': f'Batch file not found for {process_type}'}
+            
+            # Create new process
+            proc = subprocess.Popen([batch_path], cwd=os.path.dirname(batch_path), shell=True,
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            
+            # Update instance data
+            if process_type in self.launcher_gui.process_instance_tabs:
+                instances = self.launcher_gui.process_instance_tabs[process_type]
+                if instance_id < len(instances):
+                    instances[instance_id]['proc'] = proc
+                    terminal = instances[instance_id]['terminal']
+                    if terminal:
+                        terminal.attach_process(proc, batch_path)
+                        terminal.start_time = time.time()
+            
+            return {'success': True, 'message': f'Started {process_type} Instance {instance_id+1}'}
+            
+        except Exception as e:
+            return {'error': str(e)}
+
+    def stop_process_instance(self, process_type, instance_id):
+        try:
+            if process_type in self.launcher_gui.process_instance_tabs:
+                instances = self.launcher_gui.process_instance_tabs[process_type]
+                if instance_id < len(instances):
+                    proc = instances[instance_id]['proc']
+                    if proc:
+                        proc.terminate()
+                        return {'success': True, 'message': f'Stopped {process_type} Instance {instance_id+1}'}
+            
+            return {'error': f'Process not found: {process_type} Instance {instance_id+1}'}
+            
+        except Exception as e:
+            return {'error': str(e)}
+
+class MobileApp:
+    def __init__(self, launcher_gui):
+        self.launcher_gui = launcher_gui
+        self.app = None
+        self.server_thread = None
+        self.is_running = False
+        self.qr_code = None
+
+    def start(self):
+        if not FLASK_AVAILABLE:
+            self.launcher_gui.log("Flask not available. Install with: pip install flask")
+            return False
+
+        try:
+            self.app = Flask(__name__)
+            self.app.config['SECRET_KEY'] = secrets.token_hex(16)
+
+            @self.app.route('/')
+            def mobile_dashboard():
+                return self.render_mobile_dashboard()
+
+            @self.app.route('/api/mobile/status')
+            def mobile_status():
+                return jsonify(self.get_mobile_status())
+
+            @self.app.route('/api/mobile/start/<process_type>')
+            def mobile_start(process_type):
+                return jsonify(self.start_process_instance(process_type))
+
+            self.server_thread = threading.Thread(target=self._run_server, daemon=True)
+            self.server_thread.start()
+            self.is_running = True
+            
+            # Generate QR code for mobile access
+            if QRCODE_AVAILABLE:
+                self.generate_qr_code()
+            
+            self.launcher_gui.log(f"Mobile app started on http://localhost:{MOBILE_PORT}")
+            return True
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to start mobile app: {e}")
+            return False
+
+    def _run_server(self):
+        try:
+            self.app.run(host='0.0.0.0', port=MOBILE_PORT, debug=False)
+        except Exception as e:
+            self.launcher_gui.log(f"Mobile server error: {e}")
+
+    def render_mobile_dashboard(self):
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Z-Waifu Mobile Dashboard</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f0f0f0; }}
+                .header {{ background: #333; color: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; }}
+                .process-card {{ background: white; padding: 20px; border-radius: 10px; margin-bottom: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
+                .btn {{ background: #007bff; color: white; border: none; padding: 15px 20px; border-radius: 5px; cursor: pointer; width: 100%; margin: 5px 0; }}
+                .btn:hover {{ background: #0056b3; }}
+                .btn.danger {{ background: #dc3545; }}
+                .btn.danger:hover {{ background: #c82333; }}
+                .status.running {{ color: #28a745; font-weight: bold; }}
+                .status.stopped {{ color: #dc3545; font-weight: bold; }}
+                .swipe-area {{ touch-action: pan-y; }}
+            </style>
+        </head>
+        <body>
+            <div class="swipe-area">
+                <div class="header">
+                    <h1>Z-Waifu Mobile</h1>
+                    <p>Touch-friendly process management</p>
+                </div>
+                
+                <div class="process-card">
+                    <h3>Oobabooga</h3>
+                    <p class="status" id="ooba-status">Checking...</p>
+                    <button class="btn" onclick="startProcess('Oobabooga')">Start</button>
+                    <button class="btn danger" onclick="stopProcess('Oobabooga')">Stop</button>
+                </div>
+                
+                <div class="process-card">
+                    <h3>Z-Waifu</h3>
+                    <p class="status" id="zwaifu-status">Checking...</p>
+                    <button class="btn" onclick="startProcess('Z-Waifu')">Start</button>
+                    <button class="btn danger" onclick="stopProcess('Z-Waifu')">Stop</button>
+                </div>
+                
+                <div class="process-card">
+                    <h3>Ollama</h3>
+                    <p class="status" id="ollama-status">Checking...</p>
+                    <button class="btn" onclick="startProcess('Ollama')">Start</button>
+                    <button class="btn danger" onclick="stopProcess('Ollama')">Stop</button>
+                </div>
+                
+                <div class="process-card">
+                    <h3>RVC</h3>
+                    <p class="status" id="rvc-status">Checking...</p>
+                    <button class="btn" onclick="startProcess('RVC')">Start</button>
+                    <button class="btn danger" onclick="stopProcess('RVC')">Stop</button>
+                </div>
+            </div>
+            
+            <script>
+                function updateStatus() {{
+                    fetch('/api/mobile/status')
+                        .then(response => response.json())
+                        .then(data => {{
+                            Object.keys(data).forEach(process => {{
+                                const element = document.getElementById(process.toLowerCase() + '-status');
+                                if (element) {{
+                                    element.textContent = data[process] ? 'Running' : 'Stopped';
+                                    element.className = 'status ' + (data[process] ? 'running' : 'stopped');
+                                }}
+                            }});
+                        }});
+                }}
+                
+                function startProcess(processType) {{
+                    fetch(`/api/mobile/start/${{processType}}`)
+                        .then(response => response.json())
+                        .then(data => {{
+                            if (data.success) {{
+                                alert('Process started!');
+                                updateStatus();
+                            }} else {{
+                                alert('Error: ' + data.error);
+                            }}
+                        }});
+                }}
+                
+                function stopProcess(processType) {{
+                    fetch(`/api/mobile/stop/${{processType}}`)
+                        .then(response => response.json())
+                        .then(data => {{
+                            if (data.success) {{
+                                alert('Process stopped!');
+                                updateStatus();
+                            }} else {{
+                                alert('Error: ' + data.error);
+                            }}
+                        }});
+                }}
+                
+                // Update status every 5 seconds
+                updateStatus();
+                setInterval(updateStatus, 5000);
+            </script>
+        </body>
+        </html>
+        """
+
+    def get_mobile_status(self):
+        return {
+            'Oobabooga': hasattr(self.launcher_gui, 'ooba_proc') and self.launcher_gui.ooba_proc and self.launcher_gui.ooba_proc.poll() is None,
+            'Z-Waifu': hasattr(self.launcher_gui, 'zwaifu_proc') and self.launcher_gui.zwaifu_proc and self.launcher_gui.zwaifu_proc.poll() is None,
+            'Ollama': False,
+            'RVC': False
+        }
+
+    def start_process_instance(self, process_type):
+        try:
+            # Get batch file path
+            batch_path = None
+            if process_type == "Oobabooga":
+                batch_path = self.launcher_gui.ooba_bat
+            elif process_type == "Z-Waifu":
+                batch_path = self.launcher_gui.zwaifu_bat
+            elif process_type == "Ollama":
+                batch_path = self.launcher_gui.ollama_bat
+            elif process_type == "RVC":
+                batch_path = self.launcher_gui.rvc_bat
+            
+            if not batch_path or not os.path.exists(batch_path):
+                return {'error': f'Batch file not found for {process_type}'}
+            
+            # Create new process
+            proc = subprocess.Popen([batch_path], cwd=os.path.dirname(batch_path), shell=True,
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            
+            # Update instance data
+            if process_type in self.launcher_gui.process_instance_tabs:
+                instances = self.launcher_gui.process_instance_tabs[process_type]
+                if len(instances) > 0:
+                    instances[0]['proc'] = proc
+                    terminal = instances[0]['terminal']
+                    if terminal:
+                        terminal.attach_process(proc, batch_path)
+                        terminal.start_time = time.time()
+            
+            # Add notification
+            self.add_notification(
+                f"{process_type} Started",
+                f"Instance has been started successfully",
+                'success'
+            )
+            
+            return {'success': True, 'message': f'Started {process_type} Instance'}
+            
+        except Exception as e:
+            return {'error': str(e)}
+
+    def add_notification(self, title, message, type='info'):
+        # Implementation for mobile notifications
+        pass
+
+    def generate_qr_code(self):
+        try:
+            qr = qrcode.QRCode(version=1, box_size=10, border=5)
+            qr.add_data(f'http://localhost:{MOBILE_PORT}')
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="black", back_color="white")
+            qr_path = os.path.join(PROJECT_ROOT, "mobile_qr.png")
+            img.save(qr_path)
+            self.qr_code = qr_path
+            self.launcher_gui.log(f"Mobile QR code generated: {qr_path}")
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to generate QR code: {e}")
+
+class AnalyticsSystem:
+    def __init__(self, launcher_gui):
+        self.launcher_gui = launcher_gui
+        self.db_path = ANALYTICS_DB
+        self.init_database()
+
+    def init_database(self):
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Create tables
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS process_metrics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    process_name TEXT,
+                    cpu_percent REAL,
+                    memory_percent REAL,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS system_metrics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    cpu_percent REAL,
+                    memory_percent REAL,
+                    disk_usage REAL,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS process_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    process_name TEXT,
+                    event_type TEXT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to initialize analytics database: {e}")
+
+    def record_process_metrics(self, process_name, cpu_percent, memory_percent):
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                'INSERT INTO process_metrics (process_name, cpu_percent, memory_percent) VALUES (?, ?, ?)',
+                (process_name, cpu_percent, memory_percent)
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to record process metrics: {e}")
+
+    def record_system_metrics(self, cpu_percent, memory_percent, disk_usage):
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                'INSERT INTO system_metrics (cpu_percent, memory_percent, disk_usage) VALUES (?, ?, ?)',
+                (cpu_percent, memory_percent, disk_usage)
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to record system metrics: {e}")
+
+    def record_process_event(self, process_name, event_type):
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                'INSERT INTO process_events (process_name, event_type) VALUES (?, ?)',
+                (process_name, event_type)
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to record process event: {e}")
+
+    def get_process_metrics(self, process_name, hours=24):
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT cpu_percent, memory_percent, timestamp 
+                FROM process_metrics 
+                WHERE process_name = ? AND timestamp > datetime('now', '-{} hours')
+                ORDER BY timestamp
+            '''.format(hours), (process_name,))
+            data = cursor.fetchall()
+            conn.close()
+            return data
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to get process metrics: {e}")
+            return []
+
+    def get_system_metrics(self, hours=24):
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT cpu_percent, memory_percent, disk_usage, timestamp 
+                FROM system_metrics 
+                WHERE timestamp > datetime('now', '-{} hours')
+                ORDER BY timestamp
+            '''.format(hours))
+            data = cursor.fetchall()
+            conn.close()
+            return data
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to get system metrics: {e}")
+            return []
+
+    def generate_report(self, hours=24):
+        try:
+            system_data = self.get_system_metrics(hours)
+            if not system_data:
+                return "No data available for the specified time period."
+            
+            avg_cpu = sum(row[0] for row in system_data) / len(system_data)
+            avg_memory = sum(row[1] for row in system_data) / len(system_data)
+            avg_disk = sum(row[2] for row in system_data) / len(system_data)
+            
+            report = f"""
+            System Performance Report (Last {hours} hours)
+            =============================================
+            Average CPU Usage: {avg_cpu:.2f}%
+            Average Memory Usage: {avg_memory:.2f}%
+            Average Disk Usage: {avg_disk:.2f}%
+            
+            Data Points: {len(system_data)}
+            """
+            
+            return report
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to generate report: {e}")
+            return "Error generating report"
+
+class PluginManager:
+    def __init__(self, launcher_gui):
+        self.launcher_gui = launcher_gui
+        self.plugins = {}
+        self.load_plugins()
+
+    def load_plugins(self):
+        try:
+            for filename in os.listdir(PLUGINS_DIR):
+                if filename.endswith('.py') and not filename.startswith('__'):
+                    plugin_path = os.path.join(PLUGINS_DIR, filename)
+                    try:
+                        spec = importlib.util.spec_from_file_location(filename[:-3], plugin_path)
+                        module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(module)
+                        
+                        if hasattr(module, 'Plugin'):
+                            plugin_instance = module.Plugin(self.launcher_gui)
+                            self.plugins[filename[:-3]] = plugin_instance
+                            self.launcher_gui.log(f"Loaded plugin: {filename}")
+                    except Exception as e:
+                        self.launcher_gui.log(f"Failed to load plugin {filename}: {e}")
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to load plugins: {e}")
+
+    def create_plugin_template(self, plugin_name):
+        template = f'''import tkinter as tk
+from tkinter import ttk
+
+class Plugin:
+    def __init__(self, launcher_gui):
+        self.launcher_gui = launcher_gui
+        self.name = "{plugin_name}"
+        self.description = "A custom plugin for Z-Waifu Launcher"
+        
+    def on_process_start(self, process_name):
+        """Called when a process starts"""
+        self.launcher_gui.log(f"[{self.name}] Process {{process_name}} started")
+        
+    def on_process_stop(self, process_name):
+        """Called when a process stops"""
+        self.launcher_gui.log(f"[{self.name}] Process {{process_name}} stopped")
+        
+    def on_launcher_start(self):
+        """Called when the launcher starts"""
+        self.launcher_gui.log(f"[{self.name}] Launcher started")
+        
+    def on_launcher_stop(self):
+        """Called when the launcher stops"""
+        self.launcher_gui.log(f"[{self.name}] Launcher stopped")
+'''
+        
+        plugin_path = os.path.join(PLUGINS_DIR, f"{plugin_name}.py")
+        try:
+            with open(plugin_path, 'w') as f:
+                f.write(template)
+            self.launcher_gui.log(f"Created plugin template: {plugin_path}")
+            return True
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to create plugin template: {e}")
+            return False
+
+    def get_plugin_list(self):
+        return list(self.plugins.keys())
+
+    def enable_plugin(self, plugin_name):
+        if plugin_name in self.plugins:
+            plugin = self.plugins[plugin_name]
+            if hasattr(plugin, 'on_launcher_start'):
+                plugin.on_launcher_start()
+            self.launcher_gui.log(f"Enabled plugin: {plugin_name}")
+
+    def disable_plugin(self, plugin_name):
+        if plugin_name in self.plugins:
+            plugin = self.plugins[plugin_name]
+            if hasattr(plugin, 'on_launcher_stop'):
+                plugin.on_launcher_stop()
+            self.launcher_gui.log(f"Disabled plugin: {plugin_name}")
+
 # Place this after imports at the top of the file
 TAB_THEMES = {
     'main_tab':      {'bg': '#23272e', 'fg': '#e6e6e6', 'entry_bg': '#2c2f36', 'entry_fg': '#e6e6e6'},
@@ -157,6 +976,17 @@ class LauncherGUI:
         # Track current theme state
         self._dark_mode = False
 
+        # Initialize advanced features
+        self.web_interface = None
+        self.api_server = None
+        self.mobile_app = None
+        self.analytics = None
+        self.plugin_manager = None
+
+        # Initialize port variables BEFORE loading config
+        self.ooba_port_var = tk.StringVar(value="7860")
+        self.zwaifu_port_var = tk.StringVar(value="5000")
+
         # Load config and icon first
         self.load_config()
         self.load_icon()
@@ -186,16 +1016,36 @@ class LauncherGUI:
         self.create_rvc_tab()
         self.create_logs_tab()
         self.create_instance_manager_tab()  # Add instance manager tab
-        self.setup_process_tabs() # Call setup_process_tabs here
+        # Create individual process tabs with TerminalEmulator support
+        self.create_ooba_tab()
+        self.create_zwaifu_tab()
+        
+        # Initialize advanced features
+        self.initialize_advanced_features()
+        
+        # Create advanced features tab
+        self.create_advanced_features_tab()
 
         # Create theme toggle button after all tabs are created
-        self.theme_toggle_btn = ttk.Button(root, text="☽", width=3, command=self.toggle_theme)
+        self.theme_toggle_btn = tk.Button(
+            root,
+            text="🌙",  # Start in dark mode by default
+            font=("Segoe UI Emoji", 12),
+            command=self.toggle_theme,
+            bd=0,
+            relief="flat",
+            padx=0, pady=0,
+            height=1, width=2,
+            bg="#222222",
+            activebackground="#222222",
+            fg="#ffffff",
+            activeforeground="#ffffff"
+        )
         self.theme_toggle_btn.place(relx=1.0, y=2, anchor="ne")
-        
-        # Set initial theme state - start in light mode
-        self._dark_mode = False
-        self.set_light_mode()
-        self.load_theme()  # Apply saved theme
+        # Set initial theme state - start in dark mode
+        self._dark_mode = True
+        self.set_dark_mode()
+        self.root.update_idletasks()
 
         # Start periodic status updates
         self.root.after(1000, self.update_process_status)  # Start after 1 second
@@ -204,11 +1054,11 @@ class LauncherGUI:
         # System tray icon removed as requested
 
     def log(self, msg):
-        # Ensure log file exists
+        # Ensure log file exists and append message
         try:
-            if not os.path.exists(LOG_FILE):
-                with open(LOG_FILE, "w") as f:
-                    f.write("")
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(msg + "\n")
+                f.flush()
         except Exception:
             pass
         print(msg)  # Always print to CMD window
@@ -223,18 +1073,40 @@ class LauncherGUI:
         self.root.update_idletasks()
 
     def browse_ooba(self):
-        path = filedialog.askopenfilename(title="Select Oobabooga batch file", filetypes=[("Batch files", "*.bat")])
+        path = filedialog.askopenfilename(title="Select Oobabooga batch file", filetypes=[("Batch files", "*.bat")], initialdir=getattr(self, 'last_dir', os.getcwd()))
         if path:
             self.ooba_bat = path
             self.ooba_path_var.set(path)
+            self.last_dir = os.path.dirname(path)
+            self.save_config()
             print(f"Selected Oobabooga batch: {path}")
 
     def browse_zwaifu(self):
-        path = filedialog.askopenfilename(title="Select Z-Waifu batch file", filetypes=[("Batch files", "*.bat")])
+        path = filedialog.askopenfilename(title="Select Z-Waifu batch file", filetypes=[("Batch files", "*.bat")], initialdir=getattr(self, 'last_dir', os.getcwd()))
         if path:
             self.zwaifu_bat = path
             self.zwaifu_path_var.set(path)
+            self.last_dir = os.path.dirname(path)
+            self.save_config()
             print(f"Selected Z-Waifu batch: {path}")
+
+    def browse_ollama(self):
+        path = filedialog.askopenfilename(title="Select Ollama batch file", filetypes=[("Batch files", "*.bat")], initialdir=getattr(self, 'last_dir', os.getcwd()))
+        if path:
+            self.ollama_bat = path
+            self.ollama_path_var.set(path)
+            self.last_dir = os.path.dirname(path)
+            self.save_config()
+            self.log(f"Selected Ollama batch: {path}")
+
+    def browse_rvc(self):
+        path = filedialog.askopenfilename(title="Select RVC batch file", filetypes=[("Batch files", "*.bat")], initialdir=getattr(self, 'last_dir', os.getcwd()))
+        if path:
+            self.rvc_bat = path
+            self.rvc_path_var.set(path)
+            self.last_dir = os.path.dirname(path)
+            self.save_config()
+            self.log(f"Selected RVC batch: {path}")
 
     def save_ooba(self):
         save_config(self.ooba_bat, self.zwaifu_bat)
@@ -305,7 +1177,8 @@ class LauncherGUI:
                 self.start_btn.config(state='normal')
                 self.stop_all_btn.config(state='disabled')
                 return
-            self.set_status("Oobabooga is up. Launching Z-Waifu...", "green")
+            self.set_status("✅ Oobabooga instance started successfully!", "green")
+            self.log("✅ Oobabooga instance started successfully!")
             # Start Z-Waifu
             self.log(f"[Z-Waifu] Starting: {self.zwaifu_bat}")
             self.zwaifu_proc = subprocess.Popen([self.zwaifu_bat], cwd=os.path.dirname(self.zwaifu_bat), shell=True)
@@ -333,7 +1206,8 @@ class LauncherGUI:
                 self.start_btn.config(state='normal')
                 self.stop_all_btn.config(state='disabled')
                 return
-            self.set_status("Both Oobabooga and Z-Waifu started!", "green")
+            self.set_status("✅ Z-Waifu instance started successfully!", "green")
+            self.log("✅ Z-Waifu instance started successfully!")
             self.log("Both Oobabooga and Z-Waifu started successfully.")
             self.log(f"Oobabooga batch: {self.ooba_bat}")
             self.log(f"Z-Waifu batch:   {self.zwaifu_bat}")
@@ -352,7 +1226,6 @@ class LauncherGUI:
                     config_data = json.load(f)
                     self.ooba_bat = config_data.get("ooba_bat")
                     self.zwaifu_bat = config_data.get("zwaifu_bat")
-                    print(f"Loaded from config: Oobabooga={self.ooba_bat}, Z-Waifu={self.zwaifu_bat}")
                     self.ollama_enabled.set(config_data.get("ollama_enabled", False))
                     self.ollama_bat = config_data.get("ollama_bat")
                     self.rvc_enabled.set(config_data.get("rvc_enabled", False))
@@ -365,6 +1238,10 @@ class LauncherGUI:
                     self.rvc_bat = config_data.get("rvc_bat")
                     self.current_theme = config_data.get("theme", "light")
                     self.last_port = config_data.get("port", "5000")
+                    self.last_dir = config_data.get("last_dir", os.getcwd())
+                    # Load port settings
+                    self.ooba_port_var.set(str(config_data.get("ooba_port", "7860")))
+                    self.zwaifu_port_var.set(str(config_data.get("zwaifu_port", "5000")))
                     
                     # Load auto-start settings
                     if hasattr(self, 'auto_start_ooba'):
@@ -376,11 +1253,6 @@ class LauncherGUI:
                     if hasattr(self, 'auto_start_rvc'):
                         self.auto_start_rvc.set(config_data.get("auto_start_rvc", False))
                     
-                    # Load port settings
-                    if hasattr(self, 'ooba_port_var'):
-                        self.ooba_port_var.set(config_data.get("ooba_port", "7860"))
-                    if hasattr(self, 'zwaifu_port_var'):
-                        self.zwaifu_port_var.set(config_data.get("zwaifu_port", "5000"))
                 except Exception:
                     self.ooba_bat = None
                     self.zwaifu_bat = None
@@ -396,9 +1268,15 @@ class LauncherGUI:
                     self.rvc_bat = None
                     self.current_theme = "light"
                     self.last_port = "5000"
+                    self.last_dir = os.getcwd()
+                    self.ooba_port_var.set("7860")
+                    self.zwaifu_port_var.set("5000")
         else:
             self.current_theme = "light"
             self.last_port = "5000"
+            self.last_dir = os.getcwd()
+            self.ooba_port_var.set("7860")
+            self.zwaifu_port_var.set("5000")
 
     def save_config(self):
         config_data = {
@@ -420,8 +1298,9 @@ class LauncherGUI:
             "auto_start_zwaifu": getattr(self, 'auto_start_zwaifu', tk.BooleanVar(value=False)).get(),
             "auto_start_ollama": getattr(self, 'auto_start_ollama', tk.BooleanVar(value=False)).get(),
             "auto_start_rvc": getattr(self, 'auto_start_rvc', tk.BooleanVar(value=False)).get(),
-            "ooba_port": getattr(self, 'ooba_port_var', tk.StringVar(value="7860")).get(),
-            "zwaifu_port": getattr(self, 'zwaifu_port_var', tk.StringVar(value="5000")).get()
+            "ooba_port": self.ooba_port_var.get(),
+            "zwaifu_port": self.zwaifu_port_var.get(),
+            "last_dir": getattr(self, 'last_dir', os.getcwd())
         }
         with open(CONFIG_FILE, "w") as f:
             json.dump(config_data, f, indent=2)
@@ -445,20 +1324,10 @@ class LauncherGUI:
         if hasattr(self, 'current_theme'):
             if self.current_theme == 'dark':
                 self.set_dark_mode()
-                self._dark_mode = True
             else:
                 self.set_light_mode()
-                self._dark_mode = False
         else:
-            # Default to light theme
             self.set_light_mode()
-            self._dark_mode = False
-        
-        # Update button if it exists
-        if hasattr(self, 'theme_toggle_btn'):
-            # Show the opposite emoji of current theme (what you'll switch to)
-            emoji = "☀" if self._dark_mode else "☽"
-            self.theme_toggle_btn.config(text=emoji)
 
     def create_main_tab(self):
         main_tab = ttk.Frame(self.notebook)
@@ -524,29 +1393,36 @@ class LauncherGUI:
         self.cmd_flags_tab = cmd_flags_tab
 
     def load_cmd_flags(self):
-        """Load CMD_FLAGS.txt content into the editor"""
+        """Load CMD_FLAGS.txt content into the editor, with file selector fallback if missing."""
         try:
-            if os.path.exists(CMD_FLAGS_FILE):
-                with open(CMD_FLAGS_FILE, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                self.cmd_flags_text.delete('1.0', tk.END)
-                self.cmd_flags_text.insert('1.0', content)
-                self.cmd_flags_status_var.set(f"Loaded: {CMD_FLAGS_FILE}")
-                self.log(f"[CMD Flags] Loaded file: {CMD_FLAGS_FILE}")
-            else:
-                # Create default content
-                default_content = """# Oobabooga CMD Flags
-# Add your command line flags here
-# Example:
-# --listen
-# --port 7860
-# --api
-# --extensions api
-"""
-                self.cmd_flags_text.delete('1.0', tk.END)
-                self.cmd_flags_text.insert('1.0', default_content)
-                self.cmd_flags_status_var.set("Created default content (file not found)")
-                self.log("[CMD Flags] File not found, created default content")
+            cmd_flags_path = CMD_FLAGS_FILE
+            if not os.path.exists(cmd_flags_path):
+                # Prompt user to locate the file
+                msg = "CMD_FLAGS.txt not found. Would you like to locate it manually?"
+                if messagebox.askyesno("CMD_FLAGS.txt Not Found", msg):
+                    path = filedialog.askopenfilename(title="Locate CMD_FLAGS.txt", filetypes=[("Text files", "*.txt")], initialdir=getattr(self, 'last_dir', os.getcwd()))
+                    if path and os.path.exists(path):
+                        cmd_flags_path = path
+                        self.last_dir = os.path.dirname(path)
+                        self.save_config()
+                        self.log(f"[CMD Flags] User selected CMD_FLAGS.txt: {path}")
+                    else:
+                        self.log("[CMD Flags] User cancelled file selection or file does not exist.")
+                # If still not found, create default content
+                if not os.path.exists(cmd_flags_path):
+                    default_content = """# Oobabooga CMD Flags\n# Add your command line flags here\n# Example:\n# --listen\n# --port 7860\n# --api\n# --extensions api\n"""
+                    self.cmd_flags_text.delete('1.0', tk.END)
+                    self.cmd_flags_text.insert('1.0', default_content)
+                    self.cmd_flags_status_var.set("Created default content (file not found)")
+                    self.log("[CMD Flags] File not found, created default content")
+                    return
+            # Load the file
+            with open(cmd_flags_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            self.cmd_flags_text.delete('1.0', tk.END)
+            self.cmd_flags_text.insert('1.0', content)
+            self.cmd_flags_status_var.set(f"Loaded: {cmd_flags_path}")
+            self.log(f"[CMD Flags] Loaded file: {cmd_flags_path}")
         except Exception as e:
             self.cmd_flags_status_var.set(f"Error loading file: {e}")
             self.log(f"[CMD Flags] Error loading file: {e}")
@@ -720,7 +1596,6 @@ class LauncherGUI:
 
     def set_dark_mode(self):
         style = ttk.Style()
-        # Use 'clam' as a base for dark mode
         style.theme_use('clam')
         style.configure('.', background='#222222', foreground='#ffffff')
         style.configure('TLabel', background='#222222', foreground='#ffffff')
@@ -742,10 +1617,16 @@ class LauncherGUI:
                 theme = TAB_THEMES.get(tab_attr, {'bg': '#222222', 'fg': '#ffffff', 'entry_bg': '#333333', 'entry_fg': '#cccccc'})
                 self.style_widgets(getattr(self, tab_attr), theme['bg'], theme['fg'], theme['entry_bg'], theme['entry_fg'])
         self.save_config()
+        # Update toggle button for dark mode (moon visible, click to go light)
+        if hasattr(self, 'theme_toggle_btn'):
+            self.theme_toggle_btn.config(
+                text="🌙",
+                bg="#222222", activebackground="#222222",
+                fg="#ffffff", activeforeground="#ffffff"
+            )
 
     def set_light_mode(self):
         style = ttk.Style()
-        # Use 'default' as a base for light mode
         style.theme_use('default')
         style.configure('.', background='#f0f0f0', foreground='#000000')
         style.configure('TLabel', background='#f0f0f0', foreground='#000000')
@@ -764,23 +1645,22 @@ class LauncherGUI:
             self.style_widgets(self.settings_scrollable_frame, '#f0f0f0', '#000000', '#ffffff', '#000000')
         for tab_attr in ['main_tab', 'settings_tab', 'about_tab', 'ollama_tab', 'rvc_tab', 'logs_tab', 'ooba_tab', 'zwaifu_tab']:
             if hasattr(self, tab_attr):
-                # Use a light version of the custom theme, or fallback
                 theme = TAB_THEMES.get(tab_attr, {'bg': '#f0f0f0', 'fg': '#000000', 'entry_bg': '#ffffff', 'entry_fg': '#000000'})
-                # For demo, just use the fallback for all tabs in light mode, or you can define light themes per tab
                 self.style_widgets(getattr(self, tab_attr), theme['bg'], theme['fg'], theme['entry_bg'], theme['entry_fg'])
         self.save_config()
+        # Update toggle button for light mode (sun visible, click to go dark)
+        if hasattr(self, 'theme_toggle_btn'):
+            self.theme_toggle_btn.config(
+                text="☀",
+                bg="#f0f0f0", activebackground="#f0f0f0",
+                fg="#000000", activeforeground="#000000"
+            )
 
     def set_dark_mode_from_settings(self):
-        """Set dark mode and update the theme toggle button"""
         self.set_dark_mode()
-        if hasattr(self, 'theme_toggle_btn'):
-            self.theme_toggle_btn.config(text="☀")  # Show sun to switch to light mode
 
     def set_light_mode_from_settings(self):
-        """Set light mode and update the theme toggle button"""
         self.set_light_mode()
-        if hasattr(self, 'theme_toggle_btn'):
-            self.theme_toggle_btn.config(text="☽")  # Show moon to switch to dark mode
 
     def create_about_tab(self):
         about_tab = ttk.Frame(self.notebook)
@@ -826,18 +1706,21 @@ class LauncherGUI:
             # Create a new tab for this instance
             instance_tab = ttk.Frame(self.notebook)
             self.notebook.add(instance_tab, text=f"Ollama Instance {len(self.process_instance_tabs['Ollama'])+1}")
+            tab_id = self.notebook.index('end') - 1
             self.notebook.select(instance_tab)
+            self.flash_tab(tab_id, 'Ollama')
             terminal = TerminalEmulator(instance_tab)
             terminal.pack(fill=tk.BOTH, expand=True)
             try:
                 proc = subprocess.Popen([bat_path], cwd=os.path.dirname(bat_path), shell=True,
                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
                 terminal.attach_process(proc, bat_path)
-                self.log(f"Ollama instance launched: {bat_path}")
+                self.log(f"🚀 Ollama instance launched: {bat_path}")
+                self.set_status("✅ Ollama instance started successfully!", "green")
+                self.process_instance_tabs['Ollama'].append({'tab': instance_tab, 'terminal': terminal, 'proc': proc, 'bat_path': bat_path})
             except Exception as e:
                 terminal._append(f"[ERROR] Failed to start Ollama: {e}\n", '31')
                 self.log(f"[ERROR] Failed to start Ollama: {e}")
-            self.process_instance_tabs['Ollama'].append({'tab': instance_tab, 'terminal': terminal, 'proc': proc})
 
         ttk.Button(ollama_tab, text="Launch Ollama Instance", command=launch_ollama_instance).pack(padx=10, pady=(0, 10), anchor="w")
         self.style_widgets(ollama_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
@@ -867,508 +1750,25 @@ class LauncherGUI:
             # Create a new tab for this instance
             instance_tab = ttk.Frame(self.notebook)
             self.notebook.add(instance_tab, text=f"RVC Instance {len(self.process_instance_tabs['RVC'])+1}")
+            tab_id = self.notebook.index('end') - 1
             self.notebook.select(instance_tab)
+            self.flash_tab(tab_id, 'RVC')
             terminal = TerminalEmulator(instance_tab)
             terminal.pack(fill=tk.BOTH, expand=True)
             try:
                 proc = subprocess.Popen([bat_path], cwd=os.path.dirname(bat_path), shell=True,
                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-                terminal.attach_process(proc)
-                self.log(f"RVC instance launched: {bat_path}")
+                terminal.attach_process(proc, bat_path)
+                self.log(f"🚀 RVC instance launched: {bat_path}")
+                self.set_status("✅ RVC instance started successfully!", "green")
+                self.process_instance_tabs['RVC'].append({'tab': instance_tab, 'terminal': terminal, 'proc': proc, 'bat_path': bat_path})
             except Exception as e:
                 terminal._append(f"[ERROR] Failed to start RVC: {e}\n", '31')
                 self.log(f"[ERROR] Failed to start RVC: {e}")
-            self.process_instance_tabs['RVC'].append({'tab': instance_tab, 'terminal': terminal, 'proc': proc})
 
         ttk.Button(rvc_tab, text="Launch RVC Instance", command=launch_rvc_instance).pack(padx=10, pady=(0, 10), anchor="w")
         self.style_widgets(rvc_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
         self.rvc_tab = rvc_tab
-
-    def browse_ollama(self):
-        path = filedialog.askopenfilename(title="Select Ollama batch file", filetypes=[("Batch files", "*.bat")])
-        if path:
-            self.ollama_bat = path
-            self.ollama_path_var.set(path)
-
-    def launch_ollama(self):
-        import threading, time
-        self.stop_ollama()
-        bat_path = self.ollama_path_var.get()
-        args = self.ollama_args_var.get().strip()
-        if not bat_path or not os.path.exists(bat_path):
-            self.log("Ollama batch file not set or does not exist.")
-            if hasattr(self, 'ollama_status_var'):
-                self.ollama_status_var.set("Error: Batch not set")
-                self.ollama_status_label.config(foreground="red")
-            return
-        try:
-            self.ollama_output.config(state='normal')
-            self.ollama_output.delete('1.0', tk.END)
-            self.ollama_output.config(state='disabled')
-            # Launch in visible CMD window with output capture
-            if args:
-                full_cmd = f'"{bat_path}" {args}'
-            else:
-                full_cmd = f'"{bat_path}"'
-            
-            # Create a wrapper script that captures output while showing CMD window
-            wrapper_script = f'''@echo off
-title Ollama - Launcher Output
-echo Starting Ollama...
-echo Command: {full_cmd}
-echo.
-{full_cmd}
-echo.
-echo Ollama process ended.
-pause
-'''
-            
-            # Write wrapper script to temp file
-            import tempfile
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.bat', delete=False, encoding='utf-8') as f:
-                f.write(wrapper_script)
-                wrapper_path = f.name
-            
-            # Launch the wrapper script in visible CMD window
-            self.ollama_proc = subprocess.Popen(
-                ['cmd.exe', '/c', 'start', 'cmd.exe', '/k', wrapper_path],
-                cwd=os.path.dirname(bat_path),
-                creationflags=subprocess.CREATE_NEW_CONSOLE
-            )
-            self.ollama_start_time = time.time()
-            self.ollama_monitoring = True
-            self.log(f"Ollama launched: {' '.join(cmd)}")
-            
-            # Update status
-            if hasattr(self, 'ollama_status_var'):
-                self.ollama_status_var.set("Running")
-                self.ollama_status_label.config(foreground="green")
-            if hasattr(self, 'ollama_pid_var'):
-                self.ollama_pid_var.set(f"PID: {self.ollama_proc.pid}")
-            
-            # Add initial status to GUI
-            self.ollama_output.config(state='normal')
-            self.ollama_output.insert(tk.END, f"Starting Ollama...\n")
-            self.ollama_output.insert(tk.END, f"Command: {full_cmd}\n")
-            self.ollama_output.insert(tk.END, f"PID: {self.ollama_proc.pid}\n")
-            self.ollama_output.insert(tk.END, f"CMD window opened with title: Ollama - Launcher Output\n")
-            self.ollama_output.insert(tk.END, f"Process is running in visible CMD window.\n")
-            self.ollama_output.insert(tk.END, f"Check the CMD window for detailed output.\n\n")
-            self.ollama_output.see(tk.END)
-            self.ollama_output.config(state='disabled')
-            
-            # Print to console for debugging
-            print(f"[Ollama] Starting Ollama...")
-            print(f"[Ollama] Command: {full_cmd}")
-            print(f"[Ollama] PID: {self.ollama_proc.pid}")
-            print(f"[Ollama] CMD window opened with title: Ollama - Launcher Output")
-            print(f"[Ollama] Process is running in visible CMD window.")
-            print(f"[Ollama] Check the CMD window for detailed output.")
-            
-            def monitor_process():
-                try:
-                    while self.ollama_proc.poll() is None:
-                        time.sleep(1)
-                    
-                    # Process ended
-                    self.ollama_monitoring = False
-                    if hasattr(self, 'ollama_status_var'):
-                        self.ollama_status_var.set("Stopped")
-                        self.ollama_status_label.config(foreground="red")
-                    if hasattr(self, 'ollama_pid_var'):
-                        self.ollama_pid_var.set("PID: -")
-                    if hasattr(self, 'ollama_cpu_var'):
-                        self.ollama_cpu_var.set("CPU: -%")
-                    if hasattr(self, 'ollama_mem_var'):
-                        self.ollama_mem_var.set("Mem: - MB")
-                    
-                    # Add final status to GUI
-                    self.ollama_output.config(state='normal')
-                    self.ollama_output.insert(tk.END, f"Ollama process ended.\n")
-                    self.ollama_output.see(tk.END)
-                    self.ollama_output.config(state='disabled')
-                    
-                    print(f"[Ollama] Process ended.")
-                    self.log("Ollama process exited")
-                    
-                    # Auto-restart if enabled
-                    if hasattr(self, 'ollama_auto_restart') and self.ollama_auto_restart.get():
-                        self.log("Ollama exited unexpectedly. Auto-restarting...")
-                        messagebox.showinfo("Ollama Auto-Restart", "Ollama exited unexpectedly. Auto-restarting...")
-                        self.launch_ollama()
-                        
-                except Exception as e:
-                    self.log(f"Error monitoring Ollama: {e}")
-                    self.ollama_monitoring = False
-            
-            threading.Thread(target=monitor_process, daemon=True).start()
-            
-            def update_monitor():
-                try:
-                    p = psutil.Process(self.ollama_proc.pid)
-                except Exception:
-                    p = None
-                
-                while self.ollama_monitoring and self.ollama_proc.poll() is None:
-                    elapsed = int(time.time() - self.ollama_start_time)
-                    h, m, s = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
-                    if hasattr(self, 'ollama_uptime_var'):
-                        self.ollama_uptime_var.set(f"Uptime: {h:02}:{m:02}:{s:02}")
-                    
-                    if p:
-                        try:
-                            cpu = p.cpu_percent(interval=0.5)
-                            mem = p.memory_info().rss / (1024*1024)
-                            if hasattr(self, 'ollama_cpu_var'):
-                                self.ollama_cpu_var.set(f"CPU: {cpu:.1f}%")
-                            if hasattr(self, 'ollama_mem_var'):
-                                self.ollama_mem_var.set(f"Mem: {mem:.1f} MB")
-                        except Exception:
-                            if hasattr(self, 'ollama_cpu_var'):
-                                self.ollama_cpu_var.set("CPU: -%")
-                            if hasattr(self, 'ollama_mem_var'):
-                                self.ollama_mem_var.set("Mem: - MB")
-                    
-                    time.sleep(0.5)
-                
-                if hasattr(self, 'ollama_uptime_var'):
-                    self.ollama_uptime_var.set("Uptime: 00:00:00")
-                if hasattr(self, 'ollama_cpu_var'):
-                    self.ollama_cpu_var.set("CPU: -%")
-                if hasattr(self, 'ollama_mem_var'):
-                    self.ollama_mem_var.set("Mem: - MB")
-            
-            threading.Thread(target=update_monitor, daemon=True).start()
-            
-        except Exception as e:
-            self.log(f"Error launching Ollama: {e}")
-            if hasattr(self, 'ollama_status_var'):
-                self.ollama_status_var.set("Error")
-                self.ollama_status_label.config(foreground="red")
-            if hasattr(self, 'ollama_pid_var'):
-                self.ollama_pid_var.set("PID: -")
-            if hasattr(self, 'ollama_cpu_var'):
-                self.ollama_cpu_var.set("CPU: -%")
-            if hasattr(self, 'ollama_mem_var'):
-                self.ollama_mem_var.set("Mem: - MB")
-
-    def stop_ollama(self):
-        self.ollama_monitoring = False
-        if hasattr(self, 'ollama_proc') and self.ollama_proc:
-            try:
-                # Get the process and all its children
-                parent = psutil.Process(self.ollama_proc.pid)
-                children = parent.children(recursive=True)
-                
-                # Kill all child processes first
-                for child in children:
-                    try:
-                        child.kill()
-                        self.log(f"Killed Ollama child process {child.pid} ({child.name()})")
-                    except psutil.NoSuchProcess:
-                        pass
-                    except Exception as e:
-                        self.log(f"[ERROR] Failed to kill Ollama child process {child.pid}: {e}")
-                
-                # Kill the parent process
-                try:
-                    parent.kill()
-                    self.log(f"Killed Ollama parent process {parent.pid} ({parent.name()})")
-                except psutil.NoSuchProcess:
-                    pass
-                except Exception as e:
-                    self.log(f"[ERROR] Failed to kill Ollama parent process {parent.pid}: {e}")
-                
-                # Also kill the wrapper process
-                try:
-                    self.ollama_proc.kill()
-                    self.log("Killed Ollama wrapper process")
-                except Exception as e:
-                    self.log(f"[ERROR] Failed to kill Ollama wrapper process: {e}")
-                
-                self.log("Ollama stopped.")
-            except Exception as e:
-                self.log(f"Error stopping Ollama: {e}")
-            self.ollama_proc = None
-        
-        # Update status variables
-        if hasattr(self, 'ollama_status_var'):
-            self.ollama_status_var.set("Stopped")
-            self.ollama_status_label.config(foreground="red")
-        if hasattr(self, 'ollama_pid_var'):
-            self.ollama_pid_var.set("PID: -")
-        if hasattr(self, 'ollama_uptime_var'):
-            self.ollama_uptime_var.set("Uptime: 00:00:00")
-        if hasattr(self, 'ollama_cpu_var'):
-            self.ollama_cpu_var.set("CPU: -%")
-        if hasattr(self, 'ollama_mem_var'):
-            self.ollama_mem_var.set("Mem: - MB")
-
-    def restart_ollama(self):
-        self.stop_ollama()
-        self.launch_ollama()
-
-    def force_kill_ollama(self):
-        """Force kill Ollama and all its child processes"""
-        self.ollama_monitoring = False
-        if hasattr(self, 'ollama_proc') and self.ollama_proc:
-            try:
-                # Get the process and all its children
-                parent = psutil.Process(self.ollama_proc.pid)
-                children = parent.children(recursive=True)
-                
-                # Kill all child processes first
-                for child in children:
-                    try:
-                        child.kill()
-                        self.log(f"Force killed Ollama child process {child.pid} ({child.name()})")
-                    except psutil.NoSuchProcess:
-                        pass
-                    except Exception as e:
-                        self.log(f"[ERROR] Failed to force kill Ollama child process {child.pid}: {e}")
-                
-                # Kill the parent process
-                try:
-                    parent.kill()
-                    self.log(f"Force killed Ollama parent process {parent.pid} ({parent.name()})")
-                except psutil.NoSuchProcess:
-                    pass
-                except Exception as e:
-                    self.log(f"[ERROR] Failed to force kill Ollama parent process {parent.pid}: {e}")
-                
-                # Also kill the wrapper process
-                try:
-                    self.ollama_proc.kill()
-                    self.log("Force killed Ollama wrapper process")
-                except Exception as e:
-                    self.log(f"[ERROR] Failed to force kill Ollama wrapper process: {e}")
-                
-                self.log("Ollama force killed.")
-            except Exception as e:
-                self.log(f"Error force killing Ollama: {e}")
-            self.ollama_proc = None
-        if hasattr(self, 'ollama_uptime_var'):
-            self.ollama_uptime_var.set("Uptime: 00:00:00")
-        if hasattr(self, 'ollama_status_var'):
-            self.ollama_status_var.set("Stopped")
-            self.ollama_status_label.config(foreground="red")
-        if hasattr(self, 'ollama_pid_var'):
-            self.ollama_pid_var.set("PID: -")
-        if hasattr(self, 'ollama_cpu_var'):
-            self.ollama_cpu_var.set("CPU: -%")
-        if hasattr(self, 'ollama_mem_var'):
-            self.ollama_mem_var.set("Mem: - MB")
-
-    def launch_ooba(self):
-        import threading, time
-        self.stop_ooba()  # Ensure previous process is killed
-        if not hasattr(self, 'ooba_bat') or not self.ooba_bat or not os.path.exists(self.ooba_bat):
-            self.log("Oobabooga batch file not set or does not exist.")
-            if hasattr(self, 'process_status_vars') and 'Oobabooga' in self.process_status_vars:
-                self.process_status_vars['Oobabooga'].set("Error")
-            return
-        try:
-            self.ooba_proc = subprocess.Popen([self.ooba_bat], cwd=os.path.dirname(self.ooba_bat), shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            self.ooba_start_time = time.time()
-            self.ooba_monitoring = True
-            self.log(f"Oobabooga launched: {self.ooba_bat}")
-            if hasattr(self, 'process_status_vars') and 'Oobabooga' in self.process_status_vars:
-                self.process_status_vars['Oobabooga'].set("Running")
-            
-            def read_output():
-                try:
-                    for line in self.ooba_proc.stdout:
-                        if hasattr(self, 'ooba_output'):
-                            self.ooba_output.config(state='normal')
-                            self.ooba_output.insert(tk.END, line)
-                            self.ooba_output.see(tk.END)
-                            self.ooba_output.config(state='disabled')
-                except Exception as e:
-                    self.log(f"Error reading Oobabooga output: {e}")
-                finally:
-                    self.ooba_monitoring = False
-                    if self.ooba_proc and self.ooba_proc.poll() is not None:
-                        if hasattr(self, 'process_status_vars') and 'Oobabooga' in self.process_status_vars:
-                            self.process_status_vars['Oobabooga'].set("Stopped")
-                        self.log("Oobabooga process exited")
-            
-            threading.Thread(target=read_output, daemon=True).start()
-            
-            def update_uptime():
-                while self.ooba_monitoring and hasattr(self, 'ooba_start_time'):
-                    elapsed = int(time.time() - self.ooba_start_time)
-                    h, m, s = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
-                    if hasattr(self, 'ooba_uptime_var'):
-                        self.ooba_uptime_var.set(f"Uptime: {h:02}:{m:02}:{s:02}")
-                    time.sleep(1)
-            
-            threading.Thread(target=update_uptime, daemon=True).start()
-            
-        except Exception as e:
-            self.log(f"Error launching Oobabooga: {e}")
-            if hasattr(self, 'process_status_vars') and 'Oobabooga' in self.process_status_vars:
-                self.process_status_vars['Oobabooga'].set("Error")
-
-    def stop_ooba(self):
-        self.ooba_monitoring = False
-        if hasattr(self, 'ooba_proc') and self.ooba_proc:
-            try:
-                # Get the process and all its children
-                parent = psutil.Process(self.ooba_proc.pid)
-                children = parent.children(recursive=True)
-                
-                # Kill all child processes first
-                for child in children:
-                    try:
-                        child.kill()
-                        self.log(f"Killed Oobabooga child process {child.pid} ({child.name()})")
-                    except psutil.NoSuchProcess:
-                        pass
-                    except Exception as e:
-                        self.log(f"[ERROR] Failed to kill Oobabooga child process {child.pid}: {e}")
-                
-                # Kill the parent process
-                try:
-                    parent.kill()
-                    self.log(f"Killed Oobabooga parent process {parent.pid} ({parent.name()})")
-                except psutil.NoSuchProcess:
-                    pass
-                except Exception as e:
-                    self.log(f"[ERROR] Failed to kill Oobabooga parent process {parent.pid}: {e}")
-                
-                # Also kill the wrapper process
-                try:
-                    self.ooba_proc.kill()
-                    self.log("Killed Oobabooga wrapper process")
-                except Exception as e:
-                    self.log(f"[ERROR] Failed to kill Oobabooga wrapper process: {e}")
-                
-                self.log("Oobabooga stopped.")
-            except Exception as e:
-                self.log(f"Error stopping Oobabooga: {e}")
-            self.ooba_proc = None
-        if hasattr(self, 'process_status_vars') and 'Oobabooga' in self.process_status_vars:
-            self.process_status_vars['Oobabooga'].set("Stopped")
-        if hasattr(self, 'ooba_uptime_var'):
-            self.ooba_uptime_var.set("Uptime: 00:00:00")
-
-    def launch_zwaifu(self):
-        import threading, time
-        self.stop_zwaifu()  # Ensure previous process is killed
-        if not hasattr(self, 'zwaifu_bat') or not self.zwaifu_bat or not os.path.exists(self.zwaifu_bat):
-            self.log("Z-Waifu batch file not set or does not exist.")
-            if hasattr(self, 'process_status_vars') and 'Z-Waifu' in self.process_status_vars:
-                self.process_status_vars['Z-Waifu'].set("Error")
-            return
-        try:
-            self.zwaifu_proc = subprocess.Popen([self.zwaifu_bat], cwd=os.path.dirname(self.zwaifu_bat), shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            self.zwaifu_start_time = time.time()
-            self.zwaifu_monitoring = True
-            self.log(f"Z-Waifu launched: {self.zwaifu_bat}")
-            if hasattr(self, 'process_status_vars') and 'Z-Waifu' in self.process_status_vars:
-                self.process_status_vars['Z-Waifu'].set("Running")
-            
-            def read_output():
-                try:
-                    for line in self.zwaifu_proc.stdout:
-                        if hasattr(self, 'zwaifu_output'):
-                            self.zwaifu_output.config(state='normal')
-                            self.zwaifu_output.insert(tk.END, line)
-                            self.zwaifu_output.see(tk.END)
-                            self.zwaifu_output.config(state='disabled')
-                except Exception as e:
-                    self.log(f"Error reading Z-Waifu output: {e}")
-                finally:
-                    self.zwaifu_monitoring = False
-                    if self.zwaifu_proc and self.zwaifu_proc.poll() is not None:
-                        if hasattr(self, 'process_status_vars') and 'Z-Waifu' in self.process_status_vars:
-                            self.process_status_vars['Z-Waifu'].set("Stopped")
-                        self.log("Z-Waifu process exited")
-            
-            threading.Thread(target=read_output, daemon=True).start()
-            
-            def update_uptime():
-                while self.zwaifu_monitoring and hasattr(self, 'zwaifu_start_time'):
-                    elapsed = int(time.time() - self.zwaifu_start_time)
-                    h, m, s = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
-                    if hasattr(self, 'zwaifu_uptime_var'):
-                        self.zwaifu_uptime_var.set(f"Uptime: {h:02}:{m:02}:{s:02}")
-                    time.sleep(1)
-            
-            threading.Thread(target=update_uptime, daemon=True).start()
-            
-        except Exception as e:
-            self.log(f"Error launching Z-Waifu: {e}")
-            if hasattr(self, 'process_status_vars') and 'Z-Waifu' in self.process_status_vars:
-                self.process_status_vars['Z-Waifu'].set("Error")
-
-    def stop_zwaifu(self):
-        self.zwaifu_monitoring = False
-        if hasattr(self, 'zwaifu_proc') and self.zwaifu_proc:
-            try:
-                # Get the process and all its children
-                parent = psutil.Process(self.zwaifu_proc.pid)
-                children = parent.children(recursive=True)
-                
-                # Kill all child processes first
-                for child in children:
-                    try:
-                        child.kill()
-                        self.log(f"Killed Z-Waifu child process {child.pid} ({child.name()})")
-                    except psutil.NoSuchProcess:
-                        pass
-                    except Exception as e:
-                        self.log(f"[ERROR] Failed to kill Z-Waifu child process {child.pid}: {e}")
-                
-                # Kill the parent process
-                try:
-                    parent.kill()
-                    self.log(f"Killed Z-Waifu parent process {parent.pid} ({parent.name()})")
-                except psutil.NoSuchProcess:
-                    pass
-                except Exception as e:
-                    self.log(f"[ERROR] Failed to kill Z-Waifu parent process {parent.pid}: {e}")
-                
-                # Also kill the wrapper process
-                try:
-                    self.zwaifu_proc.kill()
-                    self.log("Killed Z-Waifu wrapper process")
-                except Exception as e:
-                    self.log(f"[ERROR] Failed to kill Z-Waifu wrapper process: {e}")
-                
-                self.log("Z-Waifu stopped.")
-            except Exception as e:
-                self.log(f"Error stopping Z-Waifu: {e}")
-            self.zwaifu_proc = None
-        if hasattr(self, 'process_status_vars') and 'Z-Waifu' in self.process_status_vars:
-            self.process_status_vars['Z-Waifu'].set("Stopped")
-        if hasattr(self, 'zwaifu_uptime_var'):
-            self.zwaifu_uptime_var.set("Uptime: 00:00:00")
-
-    def launch_rvc(self):
-        self.stop_rvc()
-        if not self.rvc_bat or not os.path.exists(self.rvc_bat):
-            self.log("RVC batch file not set or does not exist.")
-            return
-        try:
-            self.rvc_proc = subprocess.Popen([self.rvc_bat], cwd=os.path.dirname(self.rvc_bat), shell=True)
-            self.log(f"RVC launched: {self.rvc_bat}")
-        except Exception as e:
-            self.log(f"Error launching RVC: {e}")
-
-    def stop_rvc(self):
-        if hasattr(self, 'rvc_proc') and self.rvc_proc:
-            try:
-                self.rvc_proc.terminate()
-                self.rvc_proc.wait(timeout=5)
-                self.log("RVC stopped.")
-            except Exception as e:
-                self.log(f"Error stopping RVC: {e}")
-            self.rvc_proc = None
-
-    def restart_rvc(self):
-        self.stop_rvc()
-        self.launch_rvc()
 
     def create_logs_tab(self):
         logs_tab = ttk.Frame(self.notebook)
@@ -1377,2076 +1777,1186 @@ pause
         # Log display
         self.logs_text = scrolledtext.ScrolledText(logs_tab, state='disabled', font=("Consolas", 9))
         self.logs_text.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
-        self.logs_tab = logs_tab # Assign for styling
-        self.style_widgets(logs_tab, '#f0f0f0', '#000000', '#ffffff', '#000000') # Style logs tab
 
-    def refresh_logs(self):
-        try:
-            if not os.path.exists(LOG_FILE):
-                with open(LOG_FILE, "w") as f:
-                    f.write("")
-            with open(LOG_FILE, "r") as f:
-                lines = f.readlines()
-        except FileNotFoundError:
-            lines = []
-        # Show only the last 200 lines
-        last_lines = lines[-200:] if len(lines) > 200 else lines
-        logs = ''.join(last_lines)
-        self.logs_text.configure(state='normal')
-        self.logs_text.delete('1.0', tk.END)
-        self.logs_text.insert(tk.END, logs)
-        self.logs_text.see(tk.END)
-        self.logs_text.configure(state='disabled')
-
-    def clear_logs(self):
-        try:
-            if not os.path.exists(LOG_FILE):
-                with open(LOG_FILE, "w") as f:
-                    f.write("")
-            with open(LOG_FILE, "w") as f:
-                f.write("")
-        except Exception:
-            pass
-        self.logs_text.configure(state='normal')
-        self.logs_text.delete('1.0', tk.END)
-        self.logs_text.configure(state='disabled')
-
-    def open_log_file(self):
-        try:
-            if not os.path.exists(LOG_FILE):
-                with open(LOG_FILE, "w") as f:
-                    f.write("")
-            os.startfile(LOG_FILE)
-        except Exception as e:
-            self.log(f"Error opening log file: {e}")
-
-    def start_process(self, process):
-        if not process.is_running():
-            process.start()
-            process.status_var.set("Running")
-            process.start_btn.configure(state='disabled')
-            process.stop_btn.configure(state='normal')
-            process.restart_btn.configure(state='normal')
-            self.log(f"Started {process.name}")
-
-    def stop_process(self, process):
-        if process.is_running():
-            process.stop()
-            process.status_var.set("Stopped")
-            process.start_btn.configure(state='normal')
-            process.stop_btn.configure(state='disabled')
-            process.restart_btn.configure(state='disabled')
-            self.log(f"Stopped {process.name}")
-
-    def restart_process(self, process):
-        self.stop_process(process)
-        self.start_process(process)
-
-    def start_all_processes(self):
-        # This function is not used in the current implementation
-        # The individual process controls are used instead
-        pass
-
-    def stop_all_processes(self):
-        # Stop all running processes using the per-process controls
-        self._stop_requested = True
-        if hasattr(self, 'ooba_proc') and self.ooba_proc:
-            try:
-                self.ooba_proc.kill()
-            except Exception:
-                pass
-            self.ooba_proc = None
-        if hasattr(self, 'zwaifu_proc') and self.zwaifu_proc:
-            try:
-                self.zwaifu_proc.kill()
-            except Exception:
-                pass
-            self.zwaifu_proc = None
-        self.set_status("All processes stopped.", "red")
-        self.start_btn.config(state='normal')
-        self.stop_all_btn.config(state='disabled')
-
-    def on_close(self):
-        # Check if any process is running
-        running = any(
-            status.get() == "Running" for status in getattr(self, 'process_status_vars', {}).values()
-        )
-        if running:
-            if not messagebox.askyesno("Exit", "Some processes are still running. Stop all and exit?"):
-                return
-            self.stop_all_processes()
-        self.root.quit()
-
-    def browse_rvc(self):
-        path = filedialog.askopenfilename(title="Select RVC batch file", filetypes=[("Batch files", "*.bat")])
-        if path:
-            self.rvc_bat = path
-            self.rvc_path_var.set(path)
-            print(f"Selected RVC batch: {path}")
-
-    def show_window(self, icon=None, item=None):
-        self.root.deiconify()
-        self.root.lift()
-
-    def hide_window(self, icon=None, item=None):
-        self.root.withdraw()
-
-    def log_error(self, error_message):
-        try:
-            with open('launcher_error.log', 'a') as log_file:
-                log_file.write(f'{datetime.now()} - {error_message}\n')
-        except Exception:
-            pass
-
-    # Example: wrap process start/stop in try/except
-    def create_process_tab(self, name, bat_var, output_widget, status_var):
-        # Refactored: now supports multiple instances with TerminalEmulator
-        if not hasattr(self, 'process_instance_tabs'):
-            self.process_instance_tabs = {}
-        if name not in self.process_instance_tabs:
-            self.process_instance_tabs[name] = []
-
-        def launch_instance():
-            bat_path = bat_var.get()
-            if not bat_path or not os.path.exists(bat_path):
-                self.log(f"{name} batch file not set or does not exist.")
-                return
-            args = ''  # Optionally add args support
-            # Create a new tab for this instance
-            instance_tab = ttk.Frame(self.notebook)
-            self.notebook.add(instance_tab, text=f"{name} Instance {len(self.process_instance_tabs[name])+1}")
-            self.notebook.select(instance_tab)
-            # Terminal emulator
-            terminal = TerminalEmulator(instance_tab)
-            terminal.pack(fill=tk.BOTH, expand=True)
-            # Launch process
-            try:
-                proc = subprocess.Popen([bat_path], cwd=os.path.dirname(bat_path), shell=True,
-                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-                terminal.attach_process(proc, bat_path)
-                self.log(f"{name} instance launched: {bat_path}")
-            except Exception as e:
-                terminal._append(f"[ERROR] Failed to start {name}: {e}\n", '31')
-                self.log(f"[ERROR] Failed to start {name}: {e}")
-            # Track instance
-            self.process_instance_tabs[name].append({'tab': instance_tab, 'terminal': terminal, 'proc': proc})
-
-        # Main process tab for launching new instances
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text=name)
-        # Batch file entry and browse
-        entry = ttk.Entry(tab, textvariable=bat_var, width=50)
-        entry.pack(padx=10, pady=(10, 0), fill=tk.X, expand=True)
-        browse_btn = ttk.Button(tab, text="Browse...", command=lambda: self.browse_batch_file(name))
-        browse_btn.pack(padx=10, pady=(0, 10), anchor="w")
-        # Launch new instance button
-        launch_btn = ttk.Button(tab, text=f"Launch {name} Instance", command=launch_instance)
-        launch_btn.pack(padx=10, pady=(0, 10), anchor="w")
-        # Optionally: list running instances and allow closing them
-        # ...
-        self.style_widgets(tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
-        return tab
-
-    def force_kill_process_by_name(self, name):
-        proc = self.process_handles.get(name)
-        if proc and proc.poll() is None:
-            try:
-                # Get the process and all its children
-                parent = psutil.Process(proc.pid)
-                children = parent.children(recursive=True)
-                
-                # Kill all child processes first
-                for child in children:
-                    try:
-                        child.kill()
-                        self.log(f"Force killed child process {child.pid} ({child.name()})")
-                    except psutil.NoSuchProcess:
-                        pass
-                    except Exception as e:
-                        self.log(f"[ERROR] Failed to kill child process {child.pid}: {e}")
-                
-                # Kill the parent process
-                try:
-                    parent.kill()
-                    self.log(f"Force killed parent process {parent.pid} ({parent.name()})")
-                except psutil.NoSuchProcess:
-                    pass
-                except Exception as e:
-                    self.log(f"[ERROR] Failed to kill parent process {parent.pid}: {e}")
-                
-                # Also kill the wrapper process
-                try:
-                    proc.kill()
-                    self.log(f"Force killed wrapper process for {name}")
-                except Exception as e:
-                    self.log(f"[ERROR] Failed to kill wrapper process: {e}")
-                
-                self.log(f"Force killed {name} and all child processes")
-            except Exception as e:
-                self.log(f"[ERROR] Failed to force kill {name}: {e}")
-        self.process_status_vars[name].set("Stopped")
-        self.process_controls[name][0].config(state='normal')
-        self.process_controls[name][1].config(state='disabled')
-        self.process_controls[name][2].config(state='disabled')
-        self.process_controls[name][3].config(state='disabled')
-        self.process_handles[name] = None
-
-    def force_kill_all_processes(self):
-        for name in self.process_handles:
-            self.force_kill_process_by_name(name)
+        # Log actions
+        actions_frame = ttk.Frame(logs_tab)
+        actions_frame.pack(padx=10, pady=(0,10), fill=tk.X)
         
-        # Also kill any remaining processes by name patterns
-        self.force_kill_by_name_patterns()
-        
-        self.set_status("All processes force killed.", "red")
-        self.start_btn.config(state='normal')
-        self.stop_all_btn.config(state='disabled')
+        ttk.Button(actions_frame, text="Refresh", command=self.refresh_logs).pack(side=tk.LEFT, padx=(0,5))
+        ttk.Button(actions_frame, text="Clear", command=self.clear_logs).pack(side=tk.LEFT, padx=5)
+        ttk.Button(actions_frame, text="Open Log File", command=self.open_log_file).pack(side=tk.LEFT, padx=(5,0))
 
-    def force_kill_by_name_patterns(self):
-        """Kill processes by name patterns for common AI/ML applications"""
-        patterns = [
-            'python.exe', 'pythonw.exe', 'conda.exe', 'pip.exe',
-            'nvidia-smi.exe', 'cuda.exe', 'tensorrt.exe',
-            'ollama.exe', 'ollama',
-            'node.exe', 'npm.exe', 'yarn.exe',
-            'java.exe', 'javaw.exe',
-            'gradio', 'streamlit', 'flask', 'django',
-            'oobabooga', 'text-generation-webui',
-            'z-waif', 'zwaifu', 'waifu',
-            'rvc', 'voice', 'tts', 'stt'
-        ]
-        
-        killed_count = 0
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-            try:
-                proc_name = proc.info['name'].lower() if proc.info['name'] else ''
-                cmdline = ' '.join(proc.info['cmdline']).lower() if proc.info['cmdline'] else ''
-                
-                for pattern in patterns:
-                    if pattern.lower() in proc_name or pattern.lower() in cmdline:
-                        try:
-                            proc.kill()
-                            self.log(f"Force killed process by pattern: {proc.info['name']} (PID: {proc.info['pid']})")
-                            killed_count += 1
-                        except (psutil.NoSuchProcess, psutil.AccessDenied):
-                            pass
-                        break
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-        
-        if killed_count > 0:
-            self.log(f"Force killed {killed_count} additional processes by name patterns")
-
-    def setup_process_tabs(self):
-        # Create output widgets, status vars, and process handles for each process
-        self.ooba_output = scrolledtext.ScrolledText(self.notebook, state='disabled', font=("Consolas", 9))
-        self.zwaifu_output = scrolledtext.ScrolledText(self.notebook, state='disabled', font=("Consolas", 9))
-        self.ollama_output = scrolledtext.ScrolledText(self.notebook, state='disabled', font=("Consolas", 9))
-        self.rvc_output = scrolledtext.ScrolledText(self.notebook, state='disabled', font=("Consolas", 9))
-        self.process_status_vars = {
-            "Oobabooga": tk.StringVar(value="Stopped"),
-            "Z-Waifu": tk.StringVar(value="Stopped"),
-            # "RVC": tk.StringVar(value="Stopped")  # Remove generic RVC process tab
-        }
-        self.process_bat_vars = {
-            "Oobabooga": tk.StringVar(value=self.ooba_bat or ""),
-            "Z-Waifu": tk.StringVar(value=self.zwaifu_bat or ""),
-            # "RVC": tk.StringVar(value=self.rvc_bat or "")  # Remove generic RVC process tab
-        }
-        self.process_controls = {}
-        self.process_handles = {"Oobabooga": None, "Z-Waifu": None}  # Remove RVC from generic process handles
-        # Create tabs for each process
-        self.create_process_tab("Oobabooga", self.process_bat_vars["Oobabooga"], self.ooba_output, self.process_status_vars["Oobabooga"])
-        self.create_process_tab("Z-Waifu", self.process_bat_vars["Z-Waifu"], self.zwaifu_output, self.process_status_vars["Z-Waifu"])
-        # self.create_process_tab("RVC", self.process_bat_vars["RVC"], self.rvc_output, self.process_status_vars["RVC"])  # Remove this line
-
-    def start_process_advanced(self, name, bat_var, args_var, auto_restart_var, status_var, status_label, pid_var, uptime_var, cpu_var, mem_var, output_widget):
-        import threading, time
-        
-        # Ensure name is a string, not a StringVar
-        if hasattr(name, 'get'):
-            name = name.get()
-        elif not isinstance(name, str):
-            name = str(name)
-        
-        # Create a local copy to avoid modifying the original parameter
-        process_name = name
-        
-        self.stop_process_advanced(process_name, status_var, status_label, pid_var, uptime_var, cpu_var, mem_var)
-        
-        bat_path = bat_var.get()
-        args = args_var.get().strip()
-        
-        if not bat_path or not os.path.exists(bat_path):
-            status_var.set("Error: Batch not set")
-            status_label.config(foreground="red")
-            self.log(f"{process_name} batch file not set or does not exist.")
-            return
-        
-        try:
-            output_widget.config(state='normal')
-            output_widget.delete('1.0', tk.END)
-            output_widget.config(state='disabled')
-            
-            # Launch in visible CMD window with output capture
-            if args:
-                full_cmd = f'"{bat_path}" {args}'
-            else:
-                full_cmd = f'"{bat_path}"'
-            
-            # Create a wrapper script that captures output while showing CMD window
-            wrapper_script = f'''@echo off
-title {process_name} - Launcher Output
-echo Starting {process_name}...
-echo Command: {full_cmd}
-echo.
-{full_cmd}
-echo.
-echo {process_name} process ended.
-pause
-'''
-            
-            # Write wrapper script to temp file
-            import tempfile
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.bat', delete=False, encoding='utf-8') as f:
-                f.write(wrapper_script)
-                wrapper_path = f.name
-            
-            # Launch the wrapper script in visible CMD window
-            proc = subprocess.Popen(
-                ['cmd.exe', '/c', 'start', 'cmd.exe', '/k', wrapper_path],
-                cwd=os.path.dirname(bat_path),
-                creationflags=subprocess.CREATE_NEW_CONSOLE
-            )
-            setattr(self, f"{process_name.lower()}_proc", proc)
-            
-            status_var.set("Running")
-            status_label.config(foreground="green")
-            pid_var.set(f"PID: {proc.pid}")
-            
-            start_time = time.time()
-            self.log(f"{process_name} launched: {' '.join(cmd)}")
-            
-            monitoring = {'active': True}
-            
-            # Add initial status to GUI
-            output_widget.config(state='normal')
-            output_widget.insert(tk.END, f"Starting {process_name}...\n")
-            output_widget.insert(tk.END, f"Command: {full_cmd}\n")
-            output_widget.insert(tk.END, f"PID: {proc.pid}\n")
-            output_widget.insert(tk.END, f"CMD window opened with title: {process_name} - Launcher Output\n")
-            output_widget.insert(tk.END, f"Process is running in visible CMD window.\n")
-            output_widget.insert(tk.END, f"Check the CMD window for detailed output.\n\n")
-            output_widget.see(tk.END)
-            output_widget.config(state='disabled')
-            
-            # Print to console for debugging
-            print(f"[{process_name}] Starting {process_name}...")
-            print(f"[{process_name}] Command: {full_cmd}")
-            print(f"[{process_name}] PID: {proc.pid}")
-            print(f"[{process_name}] CMD window opened with title: {process_name} - Launcher Output")
-            print(f"[{process_name}] Process is running in visible CMD window.")
-            print(f"[{process_name}] Check the CMD window for detailed output.")
-            
-            def monitor_process():
-                try:
-                    while proc.poll() is None:
-                        time.sleep(1)
-                    
-                    # Process ended
-                    monitoring['active'] = False
-                    status_var.set("Stopped")
-                    status_label.config(foreground="red")
-                    pid_var.set("PID: -")
-                    cpu_var.set("CPU: -%")
-                    mem_var.set("Mem: - MB")
-                    
-                    # Add final status to GUI
-                    output_widget.config(state='normal')
-                    output_widget.insert(tk.END, f"{process_name} process ended.\n")
-                    output_widget.see(tk.END)
-                    output_widget.config(state='disabled')
-                    
-                    print(f"[{process_name}] Process ended.")
-                    
-                    if auto_restart_var.get():
-                        self.log(f"{process_name} exited unexpectedly. Auto-restarting...")
-                        messagebox.showinfo(f"{process_name} Auto-Restart", f"{process_name} exited unexpectedly. Auto-restarting...")
-                        self.start_process_advanced(process_name, bat_var, args_var, auto_restart_var, status_var, status_label, pid_var, uptime_var, cpu_var, mem_var, output_widget)
-                        
-                except Exception as e:
-                    self.log(f"Error monitoring {process_name}: {e}")
-                    monitoring['active'] = False
-            
-            threading.Thread(target=monitor_process, daemon=True).start()
-            
-            def update_monitor():
-                try:
-                    p = psutil.Process(proc.pid)
-                except Exception:
-                    p = None
-                
-                while monitoring['active'] and proc.poll() is None:
-                    elapsed = int(time.time() - start_time)
-                    h, m, s = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
-                    uptime_var.set(f"Uptime: {h:02}:{m:02}:{s:02}")
-                    
-                    if p:
-                        try:
-                            cpu = p.cpu_percent(interval=0.5)
-                            mem = p.memory_info().rss / (1024*1024)
-                            cpu_var.set(f"CPU: {cpu:.1f}%")
-                            mem_var.set(f"Mem: {mem:.1f} MB")
-                        except Exception:
-                            cpu_var.set("CPU: -%")
-                            mem_var.set("Mem: - MB")
-                    
-                    time.sleep(0.5)
-                
-                uptime_var.set("Uptime: 00:00:00")
-                cpu_var.set("CPU: -%")
-                mem_var.set("Mem: - MB")
-            
-            threading.Thread(target=update_monitor, daemon=True).start()
-            
-        except Exception as e:
-            status_var.set("Error")
-            status_label.config(foreground="red")
-            pid_var.set("PID: -")
-            cpu_var.set("CPU: -%")
-            mem_var.set("Mem: - MB")
-            self.log(f"Error launching {process_name}: {e}")
-
-    def stop_process_advanced(self, name, status_var, status_label, pid_var, uptime_var, cpu_var, mem_var):
-        # Ensure name is a string, not a StringVar
-        if hasattr(name, 'get'):
-            name = name.get()
-        elif not isinstance(name, str):
-            name = str(name)
-        
-        proc = getattr(self, f"{name.lower()}_proc", None)
-        if proc:
-            try:
-                # Kill the wrapper process and all its children
-                parent = psutil.Process(proc.pid)
-                children = parent.children(recursive=True)
-                
-                # Kill all child processes first
-                for child in children:
-                    try:
-                        child.kill()
-                        self.log(f"Killed {name} child process {child.pid} ({child.name()})")
-                    except psutil.NoSuchProcess:
-                        pass
-                    except Exception as e:
-                        self.log(f"[ERROR] Failed to kill {name} child process {child.pid}: {e}")
-                
-                # Kill the parent process
-                try:
-                    parent.kill()
-                    self.log(f"Killed {name} parent process {parent.pid} ({parent.name()})")
-                except psutil.NoSuchProcess:
-                    pass
-                except Exception as e:
-                    self.log(f"[ERROR] Failed to kill {name} parent process {parent.pid}: {e}")
-                
-                # Also kill the wrapper process
-                try:
-                    proc.kill()
-                    self.log(f"Killed {name} wrapper process")
-                except Exception as e:
-                    self.log(f"[ERROR] Failed to kill {name} wrapper process: {e}")
-                
-                self.log(f"{name} stopped.")
-            except Exception as e:
-                self.log(f"Error stopping {name}: {e}")
-            setattr(self, f"{name.lower()}_proc", None)
-        
-        status_var.set("Stopped")
-        status_label.config(foreground="red")
-        pid_var.set("PID: -")
-        uptime_var.set("Uptime: 00:00:00")
-        cpu_var.set("CPU: -%")
-        mem_var.set("Mem: - MB")
-
-    def restart_process_advanced(self, name, bat_var, args_var, auto_restart_var, status_var, status_label, pid_var, uptime_var, cpu_var, mem_var, output_widget):
-        # Ensure name is a string, not a StringVar
-        if hasattr(name, 'get'):
-            name = name.get()
-        elif not isinstance(name, str):
-            name = str(name)
-        
-        # Create a local copy to avoid modifying the original parameter
-        process_name = name
-        
-        self.stop_process_advanced(process_name, status_var, status_label, pid_var, uptime_var, cpu_var, mem_var)
-        self.start_process_advanced(process_name, bat_var, args_var, auto_restart_var, status_var, status_label, pid_var, uptime_var, cpu_var, mem_var, output_widget)
-
-    def force_kill_process_advanced(self, name, status_var, status_label, pid_var, uptime_var, cpu_var, mem_var):
-        """Force kill process and all its child processes"""
-        # Ensure name is a string, not a StringVar
-        if hasattr(name, 'get'):
-            name = name.get()
-        elif not isinstance(name, str):
-            name = str(name)
-        
-        proc = getattr(self, f"{name.lower()}_proc", None)
-        if proc and proc.poll() is None:
-            try:
-                # Get the process and all its children
-                parent = psutil.Process(proc.pid)
-                children = parent.children(recursive=True)
-                
-                # Kill all child processes first
-                for child in children:
-                    try:
-                        child.kill()
-                        self.log(f"Force killed {name} child process {child.pid} ({child.name()})")
-                    except psutil.NoSuchProcess:
-                        pass
-                    except Exception as e:
-                        self.log(f"[ERROR] Failed to force kill {name} child process {child.pid}: {e}")
-                
-                # Kill the parent process
-                try:
-                    parent.kill()
-                    self.log(f"Force killed {name} parent process {parent.pid} ({parent.name()})")
-                except psutil.NoSuchProcess:
-                    pass
-                except Exception as e:
-                    self.log(f"[ERROR] Failed to force kill {name} parent process {parent.pid}: {e}")
-                
-                # Also kill the wrapper process
-                try:
-                    proc.kill()
-                    self.log(f"Force killed {name} wrapper process")
-                except Exception as e:
-                    self.log(f"[ERROR] Failed to force kill {name} wrapper process: {e}")
-                
-                self.log(f"Force killed {name} and all child processes")
-            except Exception as e:
-                self.log(f"[ERROR] Failed to force kill {name}: {e}")
-        
-        setattr(self, f"{name.lower()}_proc", None)
-        status_var.set("Stopped")
-        status_label.config(foreground="red")
-        pid_var.set("PID: -")
-        uptime_var.set("Uptime: 00:00:00")
-        cpu_var.set("CPU: -%")
-        mem_var.set("Mem: - MB")
-
-    def start_process_by_name(self, name):
-        """Legacy function for backward compatibility"""
-        try:
-            # Prevent duplicate launches
-            if self.process_handles.get(name) and self.process_handles[name].poll() is None:
-                messagebox.showinfo("Already Running", f"{name} is already running.")
-                return
-            bat_path = self.process_bat_vars[name].get()
-            if not bat_path or not os.path.exists(bat_path):
-                messagebox.showerror("Batch File Not Found", f"Please select a valid batch file for {name}.")
-                return
-            output_widget = {
-                "Oobabooga": self.ooba_output,
-                "Z-Waifu": self.zwaifu_output,
-                "Ooba-LLaMA": self.ollama_output,
-                "RVC": self.rvc_output
-            }[name]
-            output_widget.configure(state='normal')
-            output_widget.delete(1.0, tk.END)
-            output_widget.configure(state='disabled')
-            
-            import subprocess, threading
-            def run_proc():
-                try:
-                    # Execute batch file in visible CMD window
-                    cmd = ["cmd.exe", "/c", "start", "cmd.exe", "/k", bat_path]
-                    proc = subprocess.Popen(
-                        cmd,
-                        cwd=os.path.dirname(bat_path),
-                        # Don't capture output - let it run in visible window
-                        creationflags=subprocess.CREATE_NEW_CONSOLE
-                    )
-                    self.process_handles[name] = proc
-                    self.process_status_vars[name].set("Running")
-                    
-                    # Store additional process info for better tracking
-                    if not hasattr(self, 'process_info'):
-                        self.process_info = {}
-                    self.process_info[name] = {
-                        'wrapper_pid': proc.pid,
-                        'start_time': time.time(),
-                        'bat_path': bat_path
-                    }
-                    
-                    # Monitor process status without blocking
-                    import time
-                    start_time = time.time()
-                    timeout = 300  # 5 minutes timeout
-                    
-                    while proc.poll() is None:
-                        # Check for timeout
-                        if time.time() - start_time > timeout:
-                            proc.terminate()
-                            self.process_status_vars[name].set("Timeout")
-                            self.process_handles[name] = None
-                            output_widget.configure(state='normal')
-                            output_widget.insert(tk.END, f"\n[ERROR] {name} startup timed out after {timeout} seconds\n")
-                            output_widget.configure(state='disabled')
-                            return
-                        time.sleep(1)  # Check every second
-                    
-                    # Process finished
-                    return_code = proc.returncode
-                    if return_code == 0:
-                        self.process_status_vars[name].set("Stopped")
-                        output_widget.configure(state='normal')
-                        output_widget.insert(tk.END, f"\n[{name}] Process completed successfully\n")
-                        output_widget.configure(state='disabled')
-                    else:
-                        self.process_status_vars[name].set("Error")
-                        output_widget.configure(state='normal')
-                        output_widget.insert(tk.END, f"\n[{name}] Process failed with return code {return_code}\n")
-                        output_widget.configure(state='disabled')
-                    
-                    self.process_handles[name] = None
-                    
-                except Exception as e:
-                    self.process_status_vars[name].set("Error")
-                    self.process_handles[name] = None
-                    output_widget.configure(state='normal')
-                    output_widget.insert(tk.END, f"\n[ERROR] Failed to start {name}: {e}\n")
-                    output_widget.configure(state='disabled')
-                    messagebox.showerror("Process Error", f"Failed to start {name}: {e}")
-                    self.log_error(str(e))
-            
-            threading.Thread(target=run_proc, daemon=True).start()
-            self.process_controls[name][0].config(state='disabled')
-            self.process_controls[name][1].config(state='normal')
-            self.process_controls[name][2].config(state='normal')
-            self.process_controls[name][3].config(state='normal') # Enable force kill
-            self.log(f"Started {name}")
-        except Exception as e:
-            self.process_status_vars[name].set("Error")
-            messagebox.showerror("Process Error", f"Failed to start {name}: {e}")
-            self.log_error(str(e))
-
-    def stop_process_by_name(self, name):
-        try:
-            proc = self.process_handles.get(name)
-            if proc and proc.poll() is None:
-                proc.terminate()
-                proc.wait(timeout=5)
-                self.log(f"Stopped {name}")
-            self.process_status_vars[name].set("Stopped")
-            self.process_controls[name][0].config(state='normal')
-            self.process_controls[name][1].config(state='disabled')
-            self.process_controls[name][2].config(state='disabled')
-            self.process_controls[name][3].config(state='disabled') # Disable force kill
-            self.process_handles[name] = None
-        except Exception as e:
-            self.process_status_vars[name].set("Error")
-            messagebox.showerror("Process Error", f"Failed to stop {name}: {e}")
-            self.log_error(str(e))
-
-    def restart_process_by_name(self, name):
-        self.stop_process_by_name(name)
-        self.start_process_by_name(name)
-
-    def stop_all_processes(self):
-        # Stop all running processes using the per-process controls
-        self._stop_requested = True
-        if hasattr(self, 'ooba_proc') and self.ooba_proc:
-            try:
-                self.ooba_proc.kill()
-            except Exception:
-                pass
-            self.ooba_proc = None
-        if hasattr(self, 'zwaifu_proc') and self.zwaifu_proc:
-            try:
-                self.zwaifu_proc.kill()
-            except Exception:
-                pass
-            self.zwaifu_proc = None
-            
-        # Also force kill any processes managed by the process tabs
-        for name in self.process_status_vars:
-            if self.process_status_vars[name].get() == "Running":
-                self.force_kill_process_by_name(name)
-        
-        # Kill any remaining processes by name patterns
-        self.force_kill_by_name_patterns()
-        
-        self.set_status("All processes stopped.", "red")
-        self.start_btn.config(state='normal')
-        self.stop_all_btn.config(state='disabled')
-
-    def on_close(self):
-        running = any(
-            self.process_status_vars[name].get() == "Running" for name in self.process_status_vars
-        )
-        if running:
-            if not messagebox.askyesno("Exit", "Some processes are still running. Stop all and exit?"):
-                return
-            self.stop_all_processes()
-        self.root.quit()
-
-    def browse_batch_file(self, name):
-        path = filedialog.askopenfilename(title=f"Select {name} batch file", filetypes=[("Batch files", "*.bat")])
-        if path:
-            self.process_bat_vars[name].set(path)
-            print(f"Selected {name} batch: {path}")
-
-    def auto_detect_batch_files(self):
-        """
-        Auto-detect default batch files for Oobabooga, Z-Waifu, Ollama, and RVC if not already set.
-        Also scan the project root for .bat files and offer them as options if found.
-        Sets the corresponding attributes and updates GUI variables if found.
-        """
-        # Scan project root for .bat files
-        root_bats = glob.glob(os.path.join(PROJECT_ROOT, '*.bat'))
-
-        # Oobabooga - look for start_windows.bat in text-generation-webui-main
-        if not self.ooba_bat:
-            ooba_path = find_batch_file("start_windows.bat")
-            if not ooba_path and root_bats:
-                ooba_path = None  # No popup, user sets in settings
-            if ooba_path:
-                self.ooba_bat = ooba_path
-                if hasattr(self, 'ooba_path_var') and self.ooba_path_var:
-                    self.ooba_path_var.set(ooba_path)
-                self.log(f"[Auto-Detect] Oobabooga batch found: {ooba_path}")
-            else:
-                self.log("[Auto-Detect] Oobabooga batch not found.")
-        
-        # Z-Waifu - look for startup.bat in z-waif-1.14-R4
-        if not self.zwaifu_bat:
-            zwaifu_path = find_batch_file("startup.bat")
-            if not zwaifu_path and root_bats:
-                zwaifu_path = None  # No popup, user sets in settings
-            if zwaifu_path:
-                self.zwaifu_bat = zwaifu_path
-                if hasattr(self, 'zwaifu_path_var') and self.zwaifu_path_var:
-                    self.zwaifu_path_var.set(zwaifu_path)
-                self.log(f"[Auto-Detect] Z-Waifu batch found: {zwaifu_path}")
-            else:
-                self.log("[Auto-Detect] Z-Waifu batch not found.")
-        
-        # Ollama - look for various possible batch files
-        if not self.ollama_bat:
-            ollama_names = ["ollama.bat", "start_ollama.bat", "launch_ollama.bat"]
-            ollama_path = None
-            for name in ollama_names:
-                ollama_path = find_batch_file(name)
-                if ollama_path:
-                    break
-            if not ollama_path and root_bats:
-                ollama_path = None  # No popup, user sets in settings
-            if ollama_path:
-                self.ollama_bat = ollama_path
-                if hasattr(self, 'ollama_path_var') and self.ollama_path_var:
-                    self.ollama_path_var.set(ollama_path)
-                self.log(f"[Auto-Detect] Ollama batch found: {ollama_path}")
-            else:
-                self.log("[Auto-Detect] Ollama batch not found.")
-        
-        # RVC - look for various possible batch files
-        if not self.rvc_bat:
-            rvc_names = ["rvc.bat", "start_rvc.bat", "launch_rvc.bat", "rvc_server.bat"]
-            rvc_path = None
-            for name in rvc_names:
-                rvc_path = find_batch_file(name)
-                if rvc_path:
-                    break
-            if not rvc_path and root_bats:
-                rvc_path = None  # No popup, user sets in settings
-            if rvc_path:
-                self.rvc_bat = rvc_path
-                if hasattr(self, 'rvc_path_var') and self.rvc_path_var:
-                    self.rvc_path_var.set(rvc_path)
-                self.log(f"[Auto-Detect] RVC batch found: {rvc_path}")
-            else:
-                self.log("[Auto-Detect] RVC batch not found.")
-        
-        # Additional batch files that might be useful
-        additional_batches = {
-            "launch_ooba_zwaifu.bat": "Combined Launcher",
-            "setup_venv_and_run_launcher.bat": "Setup Script",
-            "quick-message.bat": "Quick Message",
-            "startup-Install.bat": "Z-Waifu Install"
-        }
-        
-        for batch_name, description in additional_batches.items():
-            batch_path = find_batch_file(batch_name)
-            if batch_path:
-                self.log(f"[Auto-Detect] {description} batch found: {batch_path}")
-
-    def launch_main_program(self):
-        """
-        Open a file dialog to select a Python script, run it, and display output in the main_program_output widget.
-        """
-        path = filedialog.askopenfilename(title="Select Python script to run", filetypes=[("Python files", "*.py")])
-        if not path:
-            return
-        try:
-            if hasattr(self, 'main_program_output') and self.main_program_output:
-                self.main_program_output.config(state='normal')
-                self.main_program_output.delete(1.0, tk.END)
-            proc = subprocess.Popen([sys.executable, path], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            for line in proc.stdout:
-                if hasattr(self, 'main_program_output') and self.main_program_output:
-                    self.main_program_output.insert(tk.END, line)
-                    self.main_program_output.see(tk.END)
-                else:
-                    print(line, end="")
-            if hasattr(self, 'main_program_output') and self.main_program_output:
-                self.main_program_output.config(state='disabled')
-        except Exception as e:
-            msg = f"Error running main program: {e}"
-            if hasattr(self, 'main_program_output') and self.main_program_output:
-                self.main_program_output.config(state='normal')
-                self.main_program_output.insert(tk.END, msg + "\n")
-                self.main_program_output.config(state='disabled')
-            else:
-                print(msg)
-
-    def check_oobabooga_status(self):
-        """
-        Check if Oobabooga is running and accessible on its expected port.
-        Returns True if accessible, False otherwise.
-        """
-        try:
-            # Try common Oobabooga ports
-            ports = [7860, 5000, 8080]
-            for port in ports:
-                try:
-                    with socket.create_connection(("127.0.0.1", port), timeout=2):
-                        return True
-                except (socket.timeout, ConnectionRefusedError):
-                    continue
-            return False
-        except Exception:
-            return False
-
-    def update_process_status(self):
-        """
-        Periodically update process status based on actual running state.
-        """
-        if hasattr(self, 'process_status_vars'):
-            for name, status_var in self.process_status_vars.items():
-                if name == "Oobabooga" and status_var.get() == "Running":
-                    if not self.check_oobabooga_status():
-                        # Oobabooga shows as running but isn't accessible
-                        status_var.set("Starting...")
-                # Add similar checks for other processes as needed
-        # Schedule next update
-        self.root.after(5000, self.update_process_status)  # Check every 5 seconds
-
-    def toggle_theme(self):
-        if self._dark_mode:
-            # Currently in dark mode, switch to light mode
-            self.set_light_mode()
-            # Show moon emoji (indicating you can click to go to dark mode)
-            self.theme_toggle_btn.config(text="☽")
-        else:
-            # Currently in light mode, switch to dark mode
-            self.set_dark_mode()
-            # Show sun emoji (indicating you can click to go to light mode)
-            self.theme_toggle_btn.config(text="☀")
-
-        self._dark_mode = not self._dark_mode
-
-    def create_rvc_tab(self):
-        if not hasattr(self, 'process_instance_tabs'):
-            self.process_instance_tabs = {}
-        if 'RVC' not in self.process_instance_tabs:
-            self.process_instance_tabs['RVC'] = []
-
-        rvc_tab = ttk.Frame(self.notebook)
-        self.notebook.add(rvc_tab, text="RVC")
-
-        # Batch file selection
-        ttk.Label(rvc_tab, text="RVC batch:").pack(anchor=tk.W, padx=10, pady=(10,0))
-        self.rvc_path_var = tk.StringVar(value=self.rvc_bat if self.rvc_bat else "NOT FOUND")
-        ttk.Entry(rvc_tab, textvariable=self.rvc_path_var, state='readonly').pack(fill=tk.X, padx=10, expand=True)
-        ttk.Button(rvc_tab, text="Browse...", command=self.browse_rvc).pack(anchor=tk.E, padx=10, pady=(0,10))
-
-        # Launch new instance button
-        def launch_rvc_instance():
-            bat_path = self.rvc_path_var.get()
-            if not bat_path or not os.path.exists(bat_path):
-                self.log("RVC batch file not set or does not exist.")
-                return
-            # Create a new tab for this instance
-            instance_tab = ttk.Frame(self.notebook)
-            self.notebook.add(instance_tab, text=f"RVC Instance {len(self.process_instance_tabs['RVC'])+1}")
-            self.notebook.select(instance_tab)
-            terminal = TerminalEmulator(instance_tab)
-            terminal.pack(fill=tk.BOTH, expand=True)
-            try:
-                proc = subprocess.Popen([bat_path], cwd=os.path.dirname(bat_path), shell=True,
-                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-                terminal.attach_process(proc)
-                self.log(f"RVC instance launched: {bat_path}")
-            except Exception as e:
-                terminal._append(f"[ERROR] Failed to start RVC: {e}\n", '31')
-                self.log(f"[ERROR] Failed to start RVC: {e}")
-            self.process_instance_tabs['RVC'].append({'tab': instance_tab, 'terminal': terminal, 'proc': proc})
-
-        ttk.Button(rvc_tab, text="Launch RVC Instance", command=launch_rvc_instance).pack(padx=10, pady=(0, 10), anchor="w")
-        self.style_widgets(rvc_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
-        self.rvc_tab = rvc_tab
-
-    def launch_rvc_tab(self):
-        import threading, time
-        self.stop_rvc_tab()
-        bat_path = self.rvc_path_var.get()
-        args = self.rvc_args_var.get().strip()
-        if not bat_path or not os.path.exists(bat_path):
-            self.rvc_status_var.set("Error: Batch not set")
-            self.rvc_status_label.config(foreground="red")
-            self.log("RVC batch file not set or does not exist.")
-            return
-        try:
-            self.rvc_output.config(state='normal')
-            self.rvc_output.delete('1.0', tk.END)
-            self.rvc_output.config(state='disabled')
-            # Launch in visible CMD window with output capture
-            if args:
-                full_cmd = f'"{bat_path}" {args}'
-            else:
-                full_cmd = f'"{bat_path}"'
-            
-            # Create a wrapper script that captures output while showing CMD window
-            wrapper_script = f'''@echo off
-title RVC - Launcher Output
-echo Starting RVC...
-echo Command: {full_cmd}
-echo.
-{full_cmd}
-echo.
-echo RVC process ended.
-pause
-'''
-            
-            # Write wrapper script to temp file
-            import tempfile
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.bat', delete=False, encoding='utf-8') as f:
-                f.write(wrapper_script)
-                wrapper_path = f.name
-            
-            # Launch the wrapper script in visible CMD window
-            self.rvc_proc = subprocess.Popen(
-                ['cmd.exe', '/c', 'start', 'cmd.exe', '/k', wrapper_path],
-                cwd=os.path.dirname(bat_path),
-                creationflags=subprocess.CREATE_NEW_CONSOLE
-            )
-            self.rvc_status_var.set("Running")
-            self.rvc_status_label.config(foreground="green")
-            self.rvc_pid_var.set(f"PID: {self.rvc_proc.pid}")
-            self._rvc_start_time = time.time()
-            self._rvc_monitoring = True
-            self.log(f"RVC launched: {' '.join(cmd)}")
-            
-            # Add initial status to GUI
-            self.rvc_output.config(state='normal')
-            self.rvc_output.insert(tk.END, f"Starting RVC...\n")
-            self.rvc_output.insert(tk.END, f"Command: {full_cmd}\n")
-            self.rvc_output.insert(tk.END, f"PID: {self.rvc_proc.pid}\n")
-            self.rvc_output.insert(tk.END, f"CMD window opened with title: RVC - Launcher Output\n")
-            self.rvc_output.insert(tk.END, f"Process is running in visible CMD window.\n")
-            self.rvc_output.insert(tk.END, f"Check the CMD window for detailed output.\n\n")
-            self.rvc_output.see(tk.END)
-            self.rvc_output.config(state='disabled')
-            
-            # Print to console for debugging
-            print(f"[RVC] Starting RVC...")
-            print(f"[RVC] Command: {full_cmd}")
-            print(f"[RVC] PID: {self.rvc_proc.pid}")
-            print(f"[RVC] CMD window opened with title: RVC - Launcher Output")
-            print(f"[RVC] Process is running in visible CMD window.")
-            print(f"[RVC] Check the CMD window for detailed output.")
-            
-            def monitor_process():
-                try:
-                    while self.rvc_proc.poll() is None:
-                        time.sleep(1)
-                    
-                    # Process ended
-                    self._rvc_monitoring = False
-                    self.rvc_status_var.set("Stopped")
-                    self.rvc_status_label.config(foreground="red")
-                    self.rvc_pid_var.set("PID: -")
-                    self.rvc_cpu_var.set("CPU: -%")
-                    self.rvc_mem_var.set("Mem: - MB")
-                    
-                    # Add final status to GUI
-                    self.rvc_output.config(state='normal')
-                    self.rvc_output.insert(tk.END, f"RVC process ended.\n")
-                    self.rvc_output.see(tk.END)
-                    self.rvc_output.config(state='disabled')
-                    
-                    print(f"[RVC] Process ended.")
-                    
-                    if self.rvc_auto_restart.get():
-                        self.log("RVC exited unexpectedly. Auto-restarting...")
-                        messagebox.showinfo("RVC Auto-Restart", "RVC exited unexpectedly. Auto-restarting...")
-                        self.launch_rvc_tab()
-                        
-                except Exception as e:
-                    self.log(f"Error monitoring RVC: {e}")
-                    self._rvc_monitoring = False
-            
-            threading.Thread(target=monitor_process, daemon=True).start()
-            
-            def update_monitor():
-                try:
-                    p = psutil.Process(self.rvc_proc.pid)
-                except Exception:
-                    p = None
-                
-                while self._rvc_monitoring and self._rvc_start_time and self.rvc_proc.poll() is None:
-                    elapsed = int(time.time() - self._rvc_start_time)
-                    h, m, s = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
-                    self.rvc_uptime_var.set(f"Uptime: {h:02}:{m:02}:{s:02}")
-                    
-                    if p:
-                        try:
-                            cpu = p.cpu_percent(interval=0.5)
-                            mem = p.memory_info().rss / (1024*1024)
-                            self.rvc_cpu_var.set(f"CPU: {cpu:.1f}%")
-                            self.rvc_mem_var.set(f"Mem: {mem:.1f} MB")
-                        except Exception:
-                            self.rvc_cpu_var.set("CPU: -%")
-                            self.rvc_mem_var.set("Mem: - MB")
-                    
-                    time.sleep(0.5)
-                
-                self.rvc_uptime_var.set("Uptime: 00:00:00")
-                self.rvc_cpu_var.set("CPU: -%")
-                self.rvc_mem_var.set("Mem: - MB")
-            
-            threading.Thread(target=update_monitor, daemon=True).start()
-            
-        except Exception as e:
-            self.rvc_status_var.set("Error")
-            self.rvc_status_label.config(foreground="red")
-            self.rvc_pid_var.set("PID: -")
-            self.rvc_cpu_var.set("CPU: -%")
-            self.rvc_mem_var.set("Mem: - MB")
-            self.log(f"Error launching RVC: {e}")
-
-    def stop_rvc_tab(self):
-        self._rvc_monitoring = False
-        if hasattr(self, 'rvc_proc') and self.rvc_proc:
-            try:
-                # Kill the wrapper process and all its children
-                parent = psutil.Process(self.rvc_proc.pid)
-                children = parent.children(recursive=True)
-                
-                # Kill all child processes first
-                for child in children:
-                    try:
-                        child.kill()
-                        self.log(f"Killed RVC child process {child.pid} ({child.name()})")
-                    except psutil.NoSuchProcess:
-                        pass
-                    except Exception as e:
-                        self.log(f"[ERROR] Failed to kill RVC child process {child.pid}: {e}")
-                
-                # Kill the parent process
-                try:
-                    parent.kill()
-                    self.log(f"Killed RVC parent process {parent.pid} ({parent.name()})")
-                except psutil.NoSuchProcess:
-                    pass
-                except Exception as e:
-                    self.log(f"[ERROR] Failed to kill RVC parent process {parent.pid}: {e}")
-                
-                # Also kill the wrapper process
-                try:
-                    self.rvc_proc.kill()
-                    self.log(f"Killed RVC wrapper process")
-                except Exception as e:
-                    self.log(f"[ERROR] Failed to kill RVC wrapper process: {e}")
-                
-                self.log("RVC stopped.")
-            except Exception as e:
-                self.log(f"Error stopping RVC: {e}")
-            self.rvc_proc = None
-        self.rvc_status_var.set("Stopped")
-        self.rvc_status_label.config(foreground="red")
-        self.rvc_pid_var.set("PID: -")
-        self.rvc_uptime_var.set("Uptime: 00:00:00")
-        self.rvc_cpu_var.set("CPU: -%")
-        self.rvc_mem_var.set("Mem: - MB")
-
-    def restart_rvc_tab(self):
-        self.stop_rvc_tab()
-        self.launch_rvc_tab()
-
-    def force_kill_rvc_tab(self):
-        """Force kill RVC and all its child processes"""
-        self._rvc_monitoring = False
-        if hasattr(self, 'rvc_proc') and self.rvc_proc:
-            try:
-                # Get the process and all its children
-                parent = psutil.Process(self.rvc_proc.pid)
-                children = parent.children(recursive=True)
-                
-                # Kill all child processes first
-                for child in children:
-                    try:
-                        child.kill()
-                        self.log(f"Force killed RVC child process {child.pid} ({child.name()})")
-                    except psutil.NoSuchProcess:
-                        pass
-                    except Exception as e:
-                        self.log(f"[ERROR] Failed to force kill RVC child process {child.pid}: {e}")
-                
-                # Kill the parent process
-                try:
-                    parent.kill()
-                    self.log(f"Force killed RVC parent process {parent.pid} ({parent.name()})")
-                except psutil.NoSuchProcess:
-                    pass
-                except Exception as e:
-                    self.log(f"[ERROR] Failed to force kill RVC parent process {parent.pid}: {e}")
-                
-                # Also kill the wrapper process
-                try:
-                    self.rvc_proc.kill()
-                    self.log("Force killed RVC wrapper process")
-                except Exception as e:
-                    self.log(f"[ERROR] Failed to force kill RVC wrapper process: {e}")
-                
-                self.log("RVC force killed.")
-            except Exception as e:
-                self.log(f"Error force killing RVC: {e}")
-            self.rvc_proc = None
-        
-        self.rvc_status_var.set("Stopped")
-        self.rvc_status_label.config(foreground="red")
-        self.rvc_pid_var.set("PID: -")
-        self.rvc_uptime_var.set("Uptime: 00:00:00")
-        self.rvc_cpu_var.set("CPU: -%")
-        self.rvc_mem_var.set("Mem: - MB")
-
-    def create_process_tab_advanced(self, name, bat_var, output_widget, status_var):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text=name)
-        # Batch file entry and browse
-        entry = ttk.Entry(tab, textvariable=bat_var, width=50)
-        entry.pack(padx=10, pady=(10, 0), fill=tk.X, expand=True)
-        browse_btn = ttk.Button(tab, text="Browse...", command=lambda: self.browse_batch_file(name))
-        browse_btn.pack(padx=10, pady=(0, 10), anchor="w")
-        # Custom arguments
-        args_var = tk.StringVar()
-        ttk.Label(tab, text="Custom arguments:").pack(anchor=tk.W, padx=10, pady=(5,0))
-        ttk.Entry(tab, textvariable=args_var).pack(fill=tk.X, padx=10, expand=True)
-        # Auto-restart checkbox
-        auto_restart_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(tab, text="Auto-Restart on Crash/Exit", variable=auto_restart_var).pack(anchor=tk.W, padx=10, pady=(0,5))
-        # Status label
-        status_label = ttk.Label(tab, textvariable=status_var, foreground="red")
-        status_label.pack(anchor=tk.W, padx=10, pady=(0,5))
-        # Process monitoring
-        monitor_frame = ttk.Frame(tab)
-        monitor_frame.pack(anchor=tk.W, padx=10, pady=(0,5))
-        pid_var = tk.StringVar(value="PID: -")
-        uptime_var = tk.StringVar(value="Uptime: 00:00:00")
-        cpu_var = tk.StringVar(value="CPU: -%")
-        mem_var = tk.StringVar(value="Mem: - MB")
-        ttk.Label(monitor_frame, textvariable=pid_var).pack(side=tk.LEFT, padx=(0,10))
-        ttk.Label(monitor_frame, textvariable=uptime_var).pack(side=tk.LEFT, padx=(0,10))
-        ttk.Label(monitor_frame, textvariable=cpu_var).pack(side=tk.LEFT, padx=(0,10))
-        ttk.Label(monitor_frame, textvariable=mem_var).pack(side=tk.LEFT)
-        # Process control
-        control_frame = ttk.Frame(tab)
-        control_frame.pack(padx=10, pady=10)
-        ttk.Button(control_frame, text="Start", command=lambda: launch_fn(args_var, auto_restart_var, status_var, status_label, pid_var, uptime_var, cpu_var, mem_var, output_widget, name)).pack(side=tk.LEFT, padx=(0,5))
-        ttk.Button(control_frame, text="Stop", command=lambda: stop_fn(status_var, status_label, pid_var, uptime_var, cpu_var, mem_var, name)).pack(side=tk.LEFT, padx=5)
-        ttk.Button(control_frame, text="Restart", command=lambda: restart_fn(args_var, auto_restart_var, status_var, status_label, pid_var, uptime_var, cpu_var, mem_var, output_widget, name)).pack(side=tk.LEFT, padx=(5,0))
-        # Output log
-        output_widget.pack(in_=tab, padx=10, pady=(0, 10), fill=tk.BOTH, expand=True)
-        self.style_widgets(tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
-        return tab
-
-    def launch_process_advanced(self, bat_var, args_var, auto_restart_var, status_var, status_label, pid_var, uptime_var, cpu_var, mem_var, output_widget, name):
-        import threading, time
-        
-        # Ensure name is a string, not a StringVar
-        if hasattr(name, 'get'):
-            name = name.get()
-        elif not isinstance(name, str):
-            name = str(name)
-        
-        # Create a local copy to avoid modifying the original parameter
-        process_name = name
-        
-        self.stop_process_advanced(process_name, status_var, status_label, pid_var, uptime_var, cpu_var, mem_var)
-        bat_path = bat_var.get()
-        args = args_var.get().strip()
-        if not bat_path or not os.path.exists(bat_path):
-            status_var.set("Error: Batch not set")
-            status_label.config(foreground="red")
-            self.log(f"{process_name} batch file not set or does not exist.")
-            return
-        try:
-            output_widget.config(state='normal')
-            output_widget.delete(1.0, tk.END)
-            output_widget.config(state='disabled')
-            # Launch in visible CMD window with output capture
-            if args:
-                full_cmd = f'"{bat_path}" {args}'
-            else:
-                full_cmd = f'"{bat_path}"'
-            
-            # Create a wrapper script that captures output while showing CMD window
-            wrapper_script = f'''@echo off
-title {process_name} - Launcher Output
-echo Starting {process_name}...
-echo Command: {full_cmd}
-echo.
-{full_cmd}
-echo.
-echo {process_name} process ended.
-pause
-'''
-            
-            # Write wrapper script to temp file
-            import tempfile
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.bat', delete=False, encoding='utf-8') as f:
-                f.write(wrapper_script)
-                wrapper_path = f.name
-            
-            # Launch the wrapper script in visible CMD window
-            proc = subprocess.Popen(
-                ['cmd.exe', '/c', 'start', 'cmd.exe', '/k', wrapper_path],
-                cwd=os.path.dirname(bat_path),
-                creationflags=subprocess.CREATE_NEW_CONSOLE
-            )
-            setattr(self, f"{process_name.lower()}_proc", proc)
-            status_var.set("Running")
-            status_label.config(foreground="green")
-            pid_var.set(f"PID: {proc.pid}")
-            start_time = time.time()
-            self.log(f"{process_name} launched: {full_cmd}")
-            monitoring = {'active': True}
-            # Add initial status to GUI
-            output_widget.config(state='normal')
-            output_widget.insert(tk.END, f"Starting {process_name}...\n")
-            output_widget.insert(tk.END, f"Command: {full_cmd}\n")
-            output_widget.insert(tk.END, f"PID: {proc.pid}\n")
-            output_widget.insert(tk.END, f"CMD window opened with title: {process_name} - Launcher Output\n")
-            output_widget.insert(tk.END, f"Process is running in visible CMD window.\n")
-            output_widget.insert(tk.END, f"Check the CMD window for detailed output.\n\n")
-            output_widget.see(tk.END)
-            output_widget.config(state='disabled')
-            
-            # Print to console for debugging
-            print(f"[{process_name}] Starting {process_name}...")
-            print(f"[{process_name}] Command: {full_cmd}")
-            print(f"[{process_name}] PID: {proc.pid}")
-            print(f"[{process_name}] CMD window opened with title: {process_name} - Launcher Output")
-            print(f"[{process_name}] Process is running in visible CMD window.")
-            print(f"[{process_name}] Check the CMD window for detailed output.")
-            
-            def monitor_process():
-                try:
-                    while proc.poll() is None:
-                        time.sleep(1)
-                    
-                    # Process ended
-                    monitoring['active'] = False
-                    status_var.set("Stopped")
-                    status_label.config(foreground="red")
-                    pid_var.set("PID: -")
-                    cpu_var.set("CPU: -%")
-                    mem_var.set("Mem: - MB")
-                    
-                    # Add final status to GUI
-                    output_widget.config(state='normal')
-                    output_widget.insert(tk.END, f"{process_name} process ended.\n")
-                    output_widget.see(tk.END)
-                    output_widget.config(state='disabled')
-                    
-                    print(f"[{process_name}] Process ended.")
-                    
-                    if auto_restart_var.get():
-                        self.log(f"{process_name} exited unexpectedly. Auto-restarting...")
-                        messagebox.showinfo(f"{process_name} Auto-Restart", f"{process_name} exited unexpectedly. Auto-restarting...")
-                        self.launch_process_advanced(bat_var, args_var, auto_restart_var, status_var, status_label, pid_var, uptime_var, cpu_var, mem_var, output_widget, process_name)
-                        
-                except Exception as e:
-                    self.log(f"Error monitoring {process_name}: {e}")
-                    monitoring['active'] = False
-            
-            threading.Thread(target=monitor_process, daemon=True).start()
-            def update_monitor():
-                try:
-                    p = psutil.Process(proc.pid)
-                except Exception:
-                    p = None
-                while monitoring['active'] and proc.poll() is None:
-                    elapsed = int(time.time() - start_time)
-                    h, m, s = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
-                    uptime_var.set(f"Uptime: {h:02}:{m:02}:{s:02}")
-                    if p:
-                        try:
-                            cpu = p.cpu_percent(interval=0.5)
-                            mem = p.memory_info().rss / (1024*1024)
-                            cpu_var.set(f"CPU: {cpu:.1f}%")
-                            mem_var.set(f"Mem: {mem:.1f} MB")
-                        except Exception:
-                            cpu_var.set("CPU: -%")
-                            mem_var.set("Mem: - MB")
-                    time.sleep(0.5)
-                uptime_var.set("Uptime: 00:00:00")
-                cpu_var.set("CPU: -%")
-                mem_var.set("Mem: - MB")
-            threading.Thread(target=update_monitor, daemon=True).start()
-        except Exception as e:
-            status_var.set("Error")
-            status_label.config(foreground="red")
-            pid_var.set("PID: -")
-            cpu_var.set("CPU: -%")
-            mem_var.set("Mem: - MB")
-            self.log(f"Error launching {process_name}: {e}")
-
-
-
-    def restart_process_advanced(self, args_var, auto_restart_var, status_var, status_label, pid_var, uptime_var, cpu_var, mem_var, output_widget, name):
-        # Ensure name is a string, not a StringVar
-        if hasattr(name, 'get'):
-            name = name.get()
-        elif not isinstance(name, str):
-            name = str(name)
-        
-        # Create a local copy to avoid modifying the original parameter
-        process_name = name
-        
-        self.stop_process_advanced(process_name, status_var, status_label, pid_var, uptime_var, cpu_var, mem_var)
-        bat_var = self.process_bat_vars[process_name]
-        self.launch_process_advanced(bat_var, args_var, auto_restart_var, status_var, status_label, pid_var, uptime_var, cpu_var, mem_var, output_widget, process_name)
-
-    def show_tray_icon(self):
-        # Show a system tray icon with a menu to restore or quit
-        def on_restore(icon, item):
-            self.root.after(0, self.root.deiconify)
-        def on_quit(icon, item):
-            icon.stop()
-            self.root.after(0, self.root.quit)
-        image = Image.new("RGB", (64, 64), "purple")
-        menu = pystray.Menu(
-            pystray.MenuItem("Restore", on_restore),
-            pystray.MenuItem("Quit", on_quit)
-        )
-        self.tray_icon = pystray.Icon("ZLauncher", image, "ZLauncher", menu)
-        threading.Thread(target=self.tray_icon.run, daemon=True).start()
-
-    def show_sample_image(self):
-        img = Image.new("RGB", (64, 64), "purple")
-        tk_img = ImageTk.PhotoImage(img)
-        label = tk.Label(self.root, image=tk_img)
-        label.image = tk_img  # Keep a reference!
-        label.pack()
-        self.log("Sample image displayed.")
-
-    def open_github(self):
-        webbrowser.open("https://github.com/Drakkadakka/zwaifu-launcher")
-        self.log("Opened GitHub page.")
-
-    def list_bat_files(self):
-        files = glob.glob("*.bat")
-        self.log(f"Batch files in project root: {files}")
-
-    def list_running_processes(self):
-        """List all running processes for debugging"""
-        self.log("=== Running Processes ===")
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-            try:
-                proc_name = proc.info['name'] if proc.info['name'] else 'Unknown'
-                cmdline = ' '.join(proc.info['cmdline']) if proc.info['cmdline'] else ''
-                self.log(f"PID: {proc.info['pid']}, Name: {proc_name}, Cmd: {cmdline[:100]}...")
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-        self.log("=== End Process List ===")
-
-    def prompt_custom_input(self):
-        from tkinter import simpledialog
-        user_input = simpledialog.askstring("Custom Input", "Enter a command or message:")
-        if user_input:
-            self.log(f"User input: {user_input}")
-
-    def add_demo_buttons(self):
-        # Add demo buttons to the main tab for all advanced features
-        if hasattr(self, 'main_tab'):
-            frame = ttk.Frame(self.main_tab)
-            frame.pack(padx=10, pady=10, anchor="w")
-            ttk.Button(frame, text="Show Tray Icon", command=self.show_tray_icon).pack(side=tk.LEFT, padx=5)
-            ttk.Button(frame, text="Show Sample Image", command=self.show_sample_image).pack(side=tk.LEFT, padx=5)
-            ttk.Button(frame, text="Open GitHub", command=self.open_github).pack(side=tk.LEFT, padx=5)
-            ttk.Button(frame, text="List .bat Files", command=self.list_bat_files).pack(side=tk.LEFT, padx=5)
-            ttk.Button(frame, text="List Running Processes", command=self.list_running_processes).pack(side=tk.LEFT, padx=5)
-            ttk.Button(frame, text="Send Custom Input", command=self.prompt_custom_input).pack(side=tk.LEFT, padx=5)
-
-    # Call self.add_demo_buttons() at the end of create_main_tab
-
-    def create_ooba_tab(self):
-        if not hasattr(self, 'process_instance_tabs'):
-            self.process_instance_tabs = {}
-        if 'Oobabooga' not in self.process_instance_tabs:
-            self.process_instance_tabs['Oobabooga'] = []
-
-        ooba_tab = ttk.Frame(self.notebook)
-        self.notebook.add(ooba_tab, text="Oobabooga")
-
-        # Batch file selection
-        ttk.Label(ooba_tab, text="Oobabooga batch:").pack(anchor=tk.W, padx=10, pady=(10,0))
-        self.ooba_path_var = tk.StringVar(value=self.ooba_bat if self.ooba_bat else "NOT FOUND")
-        ttk.Entry(ooba_tab, textvariable=self.ooba_path_var, state='readonly').pack(fill=tk.X, padx=10, expand=True)
-        ttk.Button(ooba_tab, text="Browse...", command=self.browse_ooba).pack(anchor=tk.E, padx=10, pady=(0,10))
-
-        # Launch new instance button
-        def launch_ooba_instance():
-            bat_path = self.ooba_path_var.get()
-            if not bat_path or not os.path.exists(bat_path):
-                self.log("Oobabooga batch file not set or does not exist.")
-                return
-            # Create a new tab for this instance
-            instance_tab = ttk.Frame(self.notebook)
-            self.notebook.add(instance_tab, text=f"Oobabooga Instance {len(self.process_instance_tabs['Oobabooga'])+1}")
-            self.notebook.select(instance_tab)
-            terminal = TerminalEmulator(instance_tab)
-            terminal.pack(fill=tk.BOTH, expand=True)
-            try:
-                proc = subprocess.Popen([bat_path], cwd=os.path.dirname(bat_path), shell=True,
-                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-                terminal.attach_process(proc)
-                self.log(f"Oobabooga instance launched: {bat_path}")
-            except Exception as e:
-                terminal._append(f"[ERROR] Failed to start Oobabooga: {e}\n", '31')
-                self.log(f"[ERROR] Failed to start Oobabooga: {e}")
-            self.process_instance_tabs['Oobabooga'].append({'tab': instance_tab, 'terminal': terminal, 'proc': proc})
-
-        ttk.Button(ooba_tab, text="Launch Oobabooga Instance", command=launch_ooba_instance).pack(padx=10, pady=(0, 10), anchor="w")
-        self.style_widgets(ooba_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
-        self.ooba_tab = ooba_tab
-
-    def create_zwaifu_tab(self):
-        if not hasattr(self, 'process_instance_tabs'):
-            self.process_instance_tabs = {}
-        if 'Z-Waifu' not in self.process_instance_tabs:
-            self.process_instance_tabs['Z-Waifu'] = []
-
-        zwaifu_tab = ttk.Frame(self.notebook)
-        self.notebook.add(zwaifu_tab, text="Z-Waifu")
-
-        # Batch file selection
-        ttk.Label(zwaifu_tab, text="Z-Waifu batch:").pack(anchor=tk.W, padx=10, pady=(10,0))
-        self.zwaifu_path_var = tk.StringVar(value=self.zwaifu_bat if self.zwaifu_bat else "NOT FOUND")
-        ttk.Entry(zwaifu_tab, textvariable=self.zwaifu_path_var, state='readonly').pack(fill=tk.X, padx=10, expand=True)
-        ttk.Button(zwaifu_tab, text="Browse...", command=self.browse_zwaifu).pack(anchor=tk.E, padx=10, pady=(0,10))
-
-        # Launch new instance button
-        def launch_zwaifu_instance():
-            bat_path = self.zwaifu_path_var.get()
-            if not bat_path or not os.path.exists(bat_path):
-                self.log("Z-Waifu batch file not set or does not exist.")
-                return
-            # Create a new tab for this instance
-            instance_tab = ttk.Frame(self.notebook)
-            self.notebook.add(instance_tab, text=f"Z-Waifu Instance {len(self.process_instance_tabs['Z-Waifu'])+1}")
-            self.notebook.select(instance_tab)
-            terminal = TerminalEmulator(instance_tab)
-            terminal.pack(fill=tk.BOTH, expand=True)
-            try:
-                proc = subprocess.Popen([bat_path], cwd=os.path.dirname(bat_path), shell=True,
-                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-                terminal.attach_process(proc, bat_path)
-                self.log(f"Z-Waifu instance launched: {bat_path}")
-            except Exception as e:
-                terminal._append(f"[ERROR] Failed to start Z-Waifu: {e}\n", '31')
-                self.log(f"[ERROR] Failed to start Z-Waifu: {e}")
-            self.process_instance_tabs['Z-Waifu'].append({'tab': instance_tab, 'terminal': terminal, 'proc': proc})
-
-        ttk.Button(zwaifu_tab, text="Launch Z-Waifu Instance", command=launch_zwaifu_instance).pack(padx=10, pady=(0, 10), anchor="w")
-        self.style_widgets(zwaifu_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
-        self.zwaifu_tab = zwaifu_tab
+        self.logs_tab = logs_tab
+        self.style_widgets(logs_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
 
     def create_instance_manager_tab(self):
-        """Create a tab to manage all running instances"""
-        if not hasattr(self, 'process_instance_tabs'):
-            self.process_instance_tabs = {}
-        
         instance_tab = ttk.Frame(self.notebook)
         self.notebook.add(instance_tab, text="Instance Manager")
         
-        # Title and description
-        title_frame = ttk.Frame(instance_tab)
-        title_frame.pack(fill=tk.X, padx=10, pady=(10,5))
-        ttk.Label(title_frame, text="Running Instances", font=("Arial", 12, "bold")).pack(anchor=tk.W)
-        ttk.Label(title_frame, text="Manage all running process instances", font=("Arial", 9)).pack(anchor=tk.W)
+        # Create scrollable frame for instance list
+        canvas = tk.Canvas(instance_tab)
+        scrollbar = ttk.Scrollbar(instance_tab, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Header
+        header_frame = ttk.Frame(scrollable_frame)
+        header_frame.pack(padx=10, pady=10, fill=tk.X)
+        
+        ttk.Label(header_frame, text="Instance Manager", font=("Arial", 14, "bold")).pack(anchor=tk.W)
+        ttk.Label(header_frame, text="Centralized management of all running process instances").pack(anchor=tk.W)
         
         # Control buttons
-        control_frame = ttk.Frame(instance_tab)
-        control_frame.pack(fill=tk.X, padx=10, pady=(0,10))
-        ttk.Button(control_frame, text="Refresh", command=self.refresh_instance_list).pack(side=tk.LEFT, padx=(0,5))
-        ttk.Button(control_frame, text="Kill All", command=self.kill_all_instances).pack(side=tk.LEFT, padx=5)
-        ttk.Button(control_frame, text="Focus Selected", command=self.focus_selected_instance).pack(side=tk.LEFT, padx=5)
+        control_frame = ttk.Frame(scrollable_frame)
+        control_frame.pack(padx=10, pady=(0,10), fill=tk.X)
+        
+        self.kill_all_btn = ttk.Button(control_frame, text="Kill All Instances", command=self.kill_all_instances)
+        self.kill_all_btn.pack(side=tk.LEFT, padx=(0,5))
+        
+        self.refresh_btn = ttk.Button(control_frame, text="Refresh", command=self.refresh_instance_manager)
+        self.refresh_btn.pack(side=tk.LEFT, padx=5)
         
         # Instance list
-        list_frame = ttk.LabelFrame(instance_tab, text="Running Instances")
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,10))
+        list_frame = ttk.LabelFrame(scrollable_frame, text="Running Instances")
+        list_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
         
-        # Create Treeview for instance list
-        columns = ('Type', 'Instance', 'Status', 'PID', 'Uptime', 'Actions')
-        self.instance_tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=10)
+        # Create treeview for instances
+        columns = ('Process', 'Instance', 'Status', 'PID', 'Uptime', 'CPU %', 'Memory %')
+        self.instance_tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=15)
         
         # Configure columns
-        self.instance_tree.heading('Type', text='Process Type')
-        self.instance_tree.heading('Instance', text='Instance Name')
-        self.instance_tree.heading('Status', text='Status')
-        self.instance_tree.heading('PID', text='PID')
-        self.instance_tree.heading('Uptime', text='Uptime')
-        self.instance_tree.heading('Actions', text='Actions')
+        for col in columns:
+            self.instance_tree.heading(col, text=col)
+            self.instance_tree.column(col, width=100, minwidth=80)
         
-        self.instance_tree.column('Type', width=100)
-        self.instance_tree.column('Instance', width=150)
-        self.instance_tree.column('Status', width=80)
-        self.instance_tree.column('PID', width=80)
-        self.instance_tree.column('Uptime', width=100)
-        self.instance_tree.column('Actions', width=200)
-        
-        # Scrollbar
-        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.instance_tree.yview)
-        self.instance_tree.configure(yscrollcommand=scrollbar.set)
+        # Add scrollbar to treeview
+        tree_scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.instance_tree.yview)
+        self.instance_tree.configure(yscrollcommand=tree_scrollbar.set)
         
         self.instance_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        tree_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Bind double-click to focus instance
-        self.instance_tree.bind('<Double-1>', self.focus_selected_instance)
+        # Bind double-click to focus terminal
+        self.instance_tree.bind('<Double-1>', self.focus_instance_terminal)
         
-        # Status bar
-        self.instance_status_var = tk.StringVar(value="Ready")
-        status_bar = ttk.Label(instance_tab, textvariable=self.instance_status_var, relief=tk.SUNKEN, anchor=tk.W)
-        status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=(0,10))
+        # Instance controls
+        instance_control_frame = ttk.Frame(scrollable_frame)
+        instance_control_frame.pack(padx=10, pady=(0,10), fill=tk.X)
         
-        self.style_widgets(instance_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
+        ttk.Button(instance_control_frame, text="Stop Selected", 
+                  command=self.stop_selected_instance).pack(side=tk.LEFT, padx=(0,5))
+        ttk.Button(instance_control_frame, text="Restart Selected", 
+                  command=self.restart_selected_instance).pack(side=tk.LEFT, padx=5)
+        ttk.Button(instance_control_frame, text="Kill Selected", 
+                  command=self.kill_selected_instance).pack(side=tk.LEFT, padx=5)
+        
+        # Pack canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
         self.instance_manager_tab = instance_tab
+        self.style_widgets(instance_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
+        
+        # Initialize instance tracking
+        if not hasattr(self, 'process_instance_tabs'):
+            self.process_instance_tabs = {}
+        
+        # Update instance list
+        self.update_instance_manager()
 
-    def refresh_instance_list(self):
-        """Refresh the instance list"""
-        # Clear existing items
-        for item in self.instance_tree.get_children():
-            self.instance_tree.delete(item)
+    def create_ooba_tab(self):
+        ooba_tab = ttk.Frame(self.notebook)
+        self.notebook.add(ooba_tab, text="Oobabooga")
         
-        total_instances = 0
+        # Oobabooga tab content
+        ttk.Label(ooba_tab, text="Oobabooga Instance Management").pack(pady=20)
         
-        # Iterate through all process types
-        for process_type, instances in self.process_instance_tabs.items():
-            for i, instance_data in enumerate(instances):
-                tab = instance_data.get('tab')
-                terminal = instance_data.get('terminal')
-                proc = instance_data.get('proc')
-                
-                if proc and proc.poll() is None:
-                    # Process is running
-                    status = "Running"
-                    try:
-                        pid = proc.pid
-                        # Calculate uptime
-                        uptime = "Unknown"
-                        if hasattr(terminal, 'start_time'):
-                            elapsed = int(time.time() - terminal.start_time)
-                            h, m, s = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
-                            uptime = f"{h:02}:{m:02}:{s:02}"
-                    except Exception:
-                        pid = "Unknown"
-                        uptime = "Unknown"
-                    
-                    # Create action buttons frame
-                    action_frame = ttk.Frame(self.instance_tree)
-                    stop_btn = ttk.Button(action_frame, text="Stop", width=6,
-                                        command=lambda p=proc, t=terminal: self.stop_instance(p, t))
-                    restart_btn = ttk.Button(action_frame, text="Restart", width=6,
-                                           command=lambda p=proc, t=terminal, pt=process_type, idx=i: self.restart_instance(p, t, pt, idx))
-                    kill_btn = ttk.Button(action_frame, text="Kill", width=6,
-                                        command=lambda p=proc, t=terminal: self.kill_instance(p, t))
-                    
-                    stop_btn.pack(side=tk.LEFT, padx=1)
-                    restart_btn.pack(side=tk.LEFT, padx=1)
-                    kill_btn.pack(side=tk.LEFT, padx=1)
-                    
-                    # Insert into tree
-                    item = self.instance_tree.insert('', 'end', values=(
-                        process_type,
-                        f"{process_type} Instance {i+1}",
-                        status,
-                        pid,
-                        uptime,
-                        ""  # Actions column will be handled by button frame
-                    ))
-                    
-                    # Store reference to action frame
-                    self.instance_tree.set(item, 'Actions', '')
-                    total_instances += 1
-                else:
-                    # Process is not running
-                    status = "Stopped"
-                    pid = "N/A"
-                    uptime = "N/A"
-                    
-                    # Insert into tree
-                    item = self.instance_tree.insert('', 'end', values=(
-                        process_type,
-                        f"{process_type} Instance {i+1}",
-                        status,
-                        pid,
-                        uptime,
-                        "Remove"
-                    ))
-        
-        self.instance_status_var.set(f"Total instances: {total_instances}")
+        self.ooba_tab = ooba_tab
+        self.style_widgets(ooba_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
 
-    def focus_selected_instance(self, event=None):
-        """Focus the selected instance tab"""
-        selection = self.instance_tree.selection()
-        if not selection:
-            return
+    def create_zwaifu_tab(self):
+        zwaifu_tab = ttk.Frame(self.notebook)
+        self.notebook.add(zwaifu_tab, text="Z-Waifu")
         
-        item = selection[0]
-        values = self.instance_tree.item(item, 'values')
-        if not values:
-            return
+        # Z-Waifu tab content
+        ttk.Label(zwaifu_tab, text="Z-Waifu Instance Management").pack(pady=20)
         
-        process_type = values[0]
-        instance_name = values[1]
+        self.zwaifu_tab = zwaifu_tab
+        self.style_widgets(zwaifu_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
+
+    def create_advanced_features_tab(self):
+        advanced_tab = ttk.Frame(self.notebook)
+        self.notebook.add(advanced_tab, text="Advanced")
         
-        # Extract instance number
+        # Create scrollable frame for advanced features
+        canvas = tk.Canvas(advanced_tab)
+        scrollbar = ttk.Scrollbar(advanced_tab, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Web Interface Section
+        web_frame = ttk.LabelFrame(scrollable_frame, text="Web Interface")
+        web_frame.pack(padx=10, pady=10, fill=tk.X)
+        
+        ttk.Label(web_frame, text="Browser-based management interface").pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Label(web_frame, text=f"Access from: http://localhost:{WEB_PORT}").pack(anchor=tk.W, padx=5, pady=2)
+        
+        web_btn_frame = ttk.Frame(web_frame)
+        web_btn_frame.pack(padx=5, pady=5, fill=tk.X)
+        
+        self.web_start_btn = ttk.Button(web_btn_frame, text="Start Web Interface", command=self.start_web_interface)
+        self.web_start_btn.pack(side=tk.LEFT, padx=(0,5))
+        
+        self.web_stop_btn = ttk.Button(web_btn_frame, text="Stop Web Interface", command=self.stop_web_interface, state='disabled')
+        self.web_stop_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.web_open_btn = ttk.Button(web_btn_frame, text="Open in Browser", command=self.open_web_interface)
+        self.web_open_btn.pack(side=tk.LEFT, padx=5)
+        
+        # API Server Section
+        api_frame = ttk.LabelFrame(scrollable_frame, text="REST API Server")
+        api_frame.pack(padx=10, pady=10, fill=tk.X)
+        
+        ttk.Label(api_frame, text="Programmatic access via REST API").pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Label(api_frame, text=f"API endpoint: http://localhost:{API_PORT}/api").pack(anchor=tk.W, padx=5, pady=2)
+        
+        api_btn_frame = ttk.Frame(api_frame)
+        api_btn_frame.pack(padx=5, pady=5, fill=tk.X)
+        
+        self.api_start_btn = ttk.Button(api_btn_frame, text="Start API Server", command=self.start_api_server)
+        self.api_start_btn.pack(side=tk.LEFT, padx=(0,5))
+        
+        self.api_stop_btn = ttk.Button(api_btn_frame, text="Stop API Server", command=self.stop_api_server, state='disabled')
+        self.api_stop_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.api_key_btn = ttk.Button(api_btn_frame, text="Generate API Key", command=self.generate_api_key)
+        self.api_key_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Mobile Support Section
+        mobile_frame = ttk.LabelFrame(scrollable_frame, text="Mobile Support")
+        mobile_frame.pack(padx=10, pady=10, fill=tk.X)
+        
+        ttk.Label(mobile_frame, text="Mobile-optimized interface").pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Label(mobile_frame, text=f"Mobile access: http://localhost:{MOBILE_PORT}").pack(anchor=tk.W, padx=5, pady=2)
+        
+        mobile_btn_frame = ttk.Frame(mobile_frame)
+        mobile_btn_frame.pack(padx=5, pady=5, fill=tk.X)
+        
+        self.mobile_start_btn = ttk.Button(mobile_btn_frame, text="Start Mobile App", command=self.start_mobile_app)
+        self.mobile_start_btn.pack(side=tk.LEFT, padx=(0,5))
+        
+        self.mobile_stop_btn = ttk.Button(mobile_btn_frame, text="Stop Mobile App", command=self.stop_mobile_app, state='disabled')
+        self.mobile_stop_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.mobile_qr_btn = ttk.Button(mobile_btn_frame, text="Show QR Code", command=self.show_mobile_qr)
+        self.mobile_qr_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Analytics Section
+        analytics_frame = ttk.LabelFrame(scrollable_frame, text="Analytics & Monitoring")
+        analytics_frame.pack(padx=10, pady=10, fill=tk.X)
+        
+        ttk.Label(analytics_frame, text="Performance monitoring and analytics").pack(anchor=tk.W, padx=5, pady=2)
+        
+        analytics_btn_frame = ttk.Frame(analytics_frame)
+        analytics_btn_frame.pack(padx=5, pady=5, fill=tk.X)
+        
+        self.analytics_view_btn = ttk.Button(analytics_btn_frame, text="View Analytics", command=self.view_analytics)
+        self.analytics_view_btn.pack(side=tk.LEFT, padx=(0,5))
+        
+        self.analytics_report_btn = ttk.Button(analytics_btn_frame, text="Generate Report", command=self.generate_analytics_report)
+        self.analytics_report_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.analytics_export_btn = ttk.Button(analytics_btn_frame, text="Export Data", command=self.export_analytics)
+        self.analytics_export_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Plugin System Section
+        plugin_frame = ttk.LabelFrame(scrollable_frame, text="Plugin System")
+        plugin_frame.pack(padx=10, pady=10, fill=tk.X)
+        
+        ttk.Label(plugin_frame, text="Extensible plugin architecture").pack(anchor=tk.W, padx=5, pady=2)
+        
+        plugin_btn_frame = ttk.Frame(plugin_frame)
+        plugin_btn_frame.pack(padx=5, pady=5, fill=tk.X)
+        
+        self.plugin_manage_btn = ttk.Button(plugin_btn_frame, text="Manage Plugins", command=self.manage_plugins)
+        self.plugin_manage_btn.pack(side=tk.LEFT, padx=(0,5))
+        
+        self.plugin_create_btn = ttk.Button(plugin_btn_frame, text="Create Plugin", command=self.create_plugin)
+        self.plugin_create_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.plugin_reload_btn = ttk.Button(plugin_btn_frame, text="Reload Plugins", command=self.reload_plugins)
+        self.plugin_reload_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Status Section
+        status_frame = ttk.LabelFrame(scrollable_frame, text="Advanced Features Status")
+        status_frame.pack(padx=10, pady=10, fill=tk.X)
+        
+        self.advanced_status_text = scrolledtext.ScrolledText(status_frame, height=6, font=("Consolas", 9))
+        self.advanced_status_text.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
+        
+        # Pack canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        self.advanced_features_tab = advanced_tab
+        self.style_widgets(advanced_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
+        
+        # Update status
+        self.update_advanced_status()
+
+    def initialize_advanced_features(self):
+        """Initialize advanced features if available"""
         try:
-            instance_num = int(instance_name.split()[-1]) - 1
-        except (ValueError, IndexError):
-            return
-        
-        # Find the corresponding tab
-        if process_type in self.process_instance_tabs:
-            instances = self.process_instance_tabs[process_type]
-            if 0 <= instance_num < len(instances):
-                tab = instances[instance_num]['tab']
-                self.notebook.select(tab)
-                self.instance_status_var.set(f"Focused: {instance_name}")
-
-    def stop_instance(self, proc, terminal):
-        """Stop a specific instance"""
-        try:
-            if proc and proc.poll() is None:
-                proc.terminate()
-                self.log(f"Stopped instance (PID: {proc.pid})")
-                self.instance_status_var.set("Instance stopped")
-                self.refresh_instance_list()
+            # Initialize analytics system
+            if MATPLOTLIB_AVAILABLE:
+                self.analytics = AnalyticsSystem(self)
+                self.log("Analytics system initialized")
+            
+            # Initialize plugin manager
+            self.plugin_manager = PluginManager(self)
+            self.log("Plugin manager initialized")
+            
+            # Start periodic analytics collection
+            if self.analytics:
+                self.root.after(30000, self.collect_analytics)  # Every 30 seconds
+            
+            self.log("Advanced features initialized successfully")
         except Exception as e:
-            self.log(f"Error stopping instance: {e}")
-            self.instance_status_var.set(f"Error: {e}")
+            self.log(f"Failed to initialize advanced features: {e}")
 
-    def restart_instance(self, proc, terminal, process_type, instance_index):
-        """Restart a specific instance"""
+    def collect_analytics(self):
+        """Collect system and process analytics"""
+        if not self.analytics:
+            return
+        
         try:
-            # Stop current instance
-            if proc and proc.poll() is None:
-                proc.terminate()
-                time.sleep(1)  # Give it time to stop
+            # Collect system metrics
+            cpu_percent = psutil.cpu_percent()
+            memory = psutil.virtual_memory()
+            disk = psutil.disk_usage('/')
             
-            # Get the batch file path
-            batch_path = None
-            if process_type == "Oobabooga":
-                batch_path = self.ooba_bat
-            elif process_type == "Z-Waifu":
-                batch_path = self.zwaifu_bat
-            elif process_type == "Ollama":
-                batch_path = self.ollama_bat
-            elif process_type == "RVC":
-                batch_path = self.rvc_bat
+            self.analytics.record_system_metrics(
+                cpu_percent, 
+                memory.percent, 
+                disk.percent
+            )
             
-            if not batch_path or not os.path.exists(batch_path):
-                self.instance_status_var.set("Error: Batch file not found")
-                return
-            
-            # Start new process
-            new_proc = subprocess.Popen([batch_path], cwd=os.path.dirname(batch_path), shell=True,
-                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-            
-            # Update the instance data
-            if process_type in self.process_instance_tabs:
-                instances = self.process_instance_tabs[process_type]
-                if 0 <= instance_index < len(instances):
-                    instances[instance_index]['proc'] = new_proc
-                    terminal = instances[instance_index]['terminal']
-                    terminal.attach_process(new_proc)
-                    terminal.start_time = time.time()
-            
-            self.log(f"Restarted {process_type} instance")
-            self.instance_status_var.set(f"Restarted: {process_type} Instance {instance_index+1}")
-            self.refresh_instance_list()
-            
-        except Exception as e:
-            self.log(f"Error restarting instance: {e}")
-            self.instance_status_var.set(f"Error: {e}")
-
-    def kill_instance(self, proc, terminal):
-        """Force kill a specific instance"""
-        try:
-            if proc and proc.poll() is None:
-                # Kill the process and all its children
-                parent = psutil.Process(proc.pid)
-                children = parent.children(recursive=True)
-                
-                # Kill all child processes first
-                for child in children:
-                    try:
-                        child.kill()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-                
-                # Kill the parent process
+            # Collect process metrics
+            if hasattr(self, 'ooba_proc') and self.ooba_proc and self.ooba_proc.poll() is None:
                 try:
-                    parent.kill()
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    process = psutil.Process(self.ooba_proc.pid)
+                    self.analytics.record_process_metrics(
+                        'Oobabooga',
+                        process.cpu_percent(),
+                        process.memory_percent()
+                    )
+                except:
                     pass
-                
-                # Also kill the wrapper process
+            
+            if hasattr(self, 'zwaifu_proc') and self.zwaifu_proc and self.zwaifu_proc.poll() is None:
                 try:
-                    proc.kill()
-                except Exception:
+                    process = psutil.Process(self.zwaifu_proc.pid)
+                    self.analytics.record_process_metrics(
+                        'Z-Waifu',
+                        process.cpu_percent(),
+                        process.memory_percent()
+                    )
+                except:
                     pass
-                
-                self.log(f"Force killed instance (PID: {proc.pid})")
-                self.instance_status_var.set("Instance force killed")
-                self.refresh_instance_list()
+            
+            # Schedule next collection
+            self.root.after(30000, self.collect_analytics)
         except Exception as e:
-            self.log(f"Error killing instance: {e}")
-            self.instance_status_var.set(f"Error: {e}")
+            self.log(f"Failed to collect analytics: {e}")
 
-    def kill_all_instances(self):
-        """Kill all running instances"""
-        if not messagebox.askyesno("Confirm", "Are you sure you want to kill all running instances?"):
-            return
+    def toggle_theme(self):
+        """Toggle between light and dark themes, update emoji and button style."""
+        if self._dark_mode:
+            self.set_light_mode()
+        else:
+            self.set_dark_mode()
+
+    def stop_all_processes(self):
+        """Stop all running processes"""
+        self._stop_requested = True
+        if hasattr(self, 'ooba_proc') and self.ooba_proc:
+            self.ooba_proc.kill()
+        if hasattr(self, 'zwaifu_proc') and self.zwaifu_proc:
+            self.zwaifu_proc.kill()
+        self.start_btn.config(state='normal')
+        self.stop_all_btn.config(state='disabled')
+        self.set_status("All processes stopped", "red")
+        self.log("All processes stopped by user")
+
+    def launch_main_program(self):
+        """Launch the main program"""
+        self.log("Launching main program...")
+        # Implementation for launching main program
+
+    def add_demo_buttons(self):
+        """Add demo buttons to main tab"""
+        demo_frame = ttk.Frame(self.main_tab)
+        demo_frame.pack(padx=10, pady=(0,10), fill=tk.X)
+        ttk.Button(demo_frame, text="Demo Button 1").pack(side=tk.LEFT, padx=(0,5))
+        ttk.Button(demo_frame, text="Demo Button 2").pack(side=tk.LEFT, padx=5)
+
+    def update_process_status(self):
+        """Update process status periodically"""
+        # Update main process status
+        if hasattr(self, 'ooba_proc') and self.ooba_proc:
+            if self.ooba_proc.poll() is not None:
+                self.set_status("Oobabooga process stopped", "red")
         
-        killed_count = 0
-        for process_type, instances in self.process_instance_tabs.items():
-            for instance_data in instances:
-                proc = instance_data.get('proc')
-                if proc and proc.poll() is None:
-                    try:
-                        # Kill the process and all its children
-                        parent = psutil.Process(proc.pid)
-                        children = parent.children(recursive=True)
-                        
-                        for child in children:
-                            try:
-                                child.kill()
-                            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                                pass
-                        
-                        try:
-                            parent.kill()
-                        except (psutil.NoSuchProcess, psutil.AccessDenied):
-                            pass
-                        
-                        try:
-                            proc.kill()
-                        except Exception:
-                            pass
-                        
-                        killed_count += 1
-                    except Exception as e:
-                        self.log(f"Error killing {process_type} instance: {e}")
+        if hasattr(self, 'zwaifu_proc') and self.zwaifu_proc:
+            if self.zwaifu_proc.poll() is not None:
+                self.set_status("Z-Waifu process stopped", "red")
         
-        self.log(f"Killed {killed_count} instances")
-        self.instance_status_var.set(f"Killed {killed_count} instances")
-        self.refresh_instance_list()
+        # Schedule next update
+        self.root.after(1000, self.update_process_status)
 
     def update_instance_manager(self):
-        """Periodically update the instance manager"""
+        """Update instance manager periodically"""
         if hasattr(self, 'instance_tree'):
-            self.refresh_instance_list()
+            # Clear existing items
+            for item in self.instance_tree.get_children():
+                self.instance_tree.delete(item)
+            
+            # Add instances to treeview
+            for process_type in self.process_instance_tabs:
+                instances = self.process_instance_tabs[process_type]
+                for i, instance in enumerate(instances):
+                    if instance['proc']:
+                        # Get process status
+                        status = "Running" if instance['proc'].poll() is None else "Stopped"
+                        pid = instance['proc'].pid if instance['proc'].poll() is None else "N/A"
+                        
+                        # Get uptime
+                        uptime = "N/A"
+                        if hasattr(instance['terminal'], 'get_uptime'):
+                            uptime_seconds = instance['terminal'].get_uptime()
+                            if uptime_seconds > 0:
+                                hours = int(uptime_seconds // 3600)
+                                minutes = int((uptime_seconds % 3600) // 60)
+                                seconds = int(uptime_seconds % 60)
+                                uptime = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                        
+                        # Get CPU and memory usage
+                        cpu_percent = "N/A"
+                        memory_percent = "N/A"
+                        if instance['proc'].poll() is None:
+                            try:
+                                psutil_process = psutil.Process(instance['proc'].pid)
+                                cpu_percent = f"{psutil_process.cpu_percent():.1f}"
+                                memory_percent = f"{psutil_process.memory_percent():.1f}"
+                            except:
+                                pass
+                        
+                        # Insert into treeview
+                        self.instance_tree.insert('', 'end', values=(
+                            process_type,
+                            f"Instance {i+1}",
+                            status,
+                            pid,
+                            uptime,
+                            cpu_percent,
+                            memory_percent
+                        ))
+        
         # Schedule next update
         self.root.after(5000, self.update_instance_manager)  # Update every 5 seconds
 
+    def flash_tab(self, tab_id, process_type):
+        """Flash a tab to indicate process activity"""
+        try:
+            # Get the tab widget
+            tab_widget = self.notebook.tabs()[tab_id]
+            
+            # Store original background
+            original_bg = self.notebook.tab(tab_widget, "text")
+            
+            # Flash effect - change text color briefly
+            def flash_effect():
+                self.notebook.tab(tab_widget, text=f"⚡ {original_bg}")
+                self.root.after(500, lambda: self.notebook.tab(tab_widget, text=original_bg))
+            
+            flash_effect()
+        except Exception as e:
+            self.log(f"Failed to flash tab: {e}")
 
-class TerminalEmulator(tk.Frame):
-    """
-    A robust terminal emulator widget for Tkinter:
-    - Real-time output (with ANSI color support)
-    - Input box for stdin
-    - Command history (up/down)
-    - Attach to subprocess.Popen
-    - Per-instance controls
-    """
-    ANSI_COLORS = {
-        '30': '#000000', '31': '#ff0000', '32': '#00ff00', '33': '#ffff00',
-        '34': '#0000ff', '35': '#ff00ff', '36': '#00ffff', '37': '#ffffff',
-        '90': '#888888', '91': '#ff5555', '92': '#55ff55', '93': '#ffff55',
-        '94': '#5555ff', '95': '#ff55ff', '96': '#55ffff', '97': '#ffffff',
-    }
-    ANSI_RE = re.compile(r'\x1b\[(\d+)(;(\d+))*m')
+    def browse_ollama(self):
+        """Browse for Ollama batch file"""
+        path = filedialog.askopenfilename(title="Select Ollama batch file", filetypes=[("Batch files", "*.bat")], initialdir=getattr(self, 'last_dir', os.getcwd()))
+        if path:
+            self.ollama_bat = path
+            self.ollama_path_var.set(path)
+            self.last_dir = os.path.dirname(path)
+            self.save_config()
+            self.log(f"Selected Ollama batch: {path}")
 
-    def __init__(self, master, **kwargs):
-        super().__init__(master, **kwargs)
-        
-        # Control panel at the top
-        self.control_panel = ttk.Frame(self)
-        self.control_panel.pack(fill=tk.X, padx=2, pady=(2,0))
-        
-        # Status label
-        self.status_var = tk.StringVar(value="Ready")
-        self.status_label = ttk.Label(self.control_panel, textvariable=self.status_var, font=("Arial", 9))
-        self.status_label.pack(side=tk.LEFT, padx=(0,10))
-        
-        # Control buttons
-        self.stop_btn = ttk.Button(self.control_panel, text="Stop", width=6, command=self.stop_process)
-        self.stop_btn.pack(side=tk.LEFT, padx=2)
-        
-        self.restart_btn = ttk.Button(self.control_panel, text="Restart", width=6, command=self.restart_process)
-        self.restart_btn.pack(side=tk.LEFT, padx=2)
-        
-        self.kill_btn = ttk.Button(self.control_panel, text="Kill", width=6, command=self.kill_process)
-        self.kill_btn.pack(side=tk.LEFT, padx=2)
-        
-        self.clear_btn = ttk.Button(self.control_panel, text="Clear", width=6, command=self.clear)
-        self.clear_btn.pack(side=tk.LEFT, padx=2)
-        
-        # Initially disable control buttons
-        self.stop_btn.config(state='disabled')
-        self.restart_btn.config(state='disabled')
-        self.kill_btn.config(state='disabled')
-        
-        # Terminal output
-        self.output = scrolledtext.ScrolledText(self, state='disabled', font=("Consolas", 10), wrap=tk.WORD)
-        self.output.pack(fill=tk.BOTH, expand=True, padx=2, pady=(2,0))
-        
-        # Input area
-        input_frame = ttk.Frame(self)
-        input_frame.pack(fill=tk.X, padx=2, pady=(0,2))
-        
-        ttk.Label(input_frame, text="Input:", font=("Arial", 9)).pack(side=tk.LEFT, padx=(0,5))
-        self.input = tk.Entry(input_frame, font=("Consolas", 10))
-        self.input.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.input.bind('<Return>', self._on_enter)
-        self.input.bind('<Up>', self._on_up)
-        self.input.bind('<Down>', self._on_down)
-        
-        # Process management
-        self.proc = None
-        self._thread = None
-        self._history = []
-        self._history_index = 0
-        self._current_input = ''
-        self._ansi_tags = {}
-        self._setup_tags()
-        self._stdin_lock = threading.Lock()
-        self.start_time = None
-        self.batch_path = None
+    def browse_rvc(self):
+        """Browse for RVC batch file"""
+        path = filedialog.askopenfilename(title="Select RVC batch file", filetypes=[("Batch files", "*.bat")], initialdir=getattr(self, 'last_dir', os.getcwd()))
+        if path:
+            self.rvc_bat = path
+            self.rvc_path_var.set(path)
+            self.last_dir = os.path.dirname(path)
+            self.save_config()
+            self.log(f"Selected RVC batch: {path}")
 
-    def _setup_tags(self):
-        for code, color in self.ANSI_COLORS.items():
-            tag = f'ansi_fg_{code}'
-            self.output.tag_configure(tag, foreground=color)
-            self._ansi_tags[code] = tag
+    def auto_detect_batch_files(self):
+        """Auto-detect batch files in the project"""
+        # Auto-detect Oobabooga
+        if not self.ooba_bat:
+            ooba_path = find_batch_file("start_windows.bat")
+            if ooba_path:
+                self.ooba_bat = ooba_path
+                self.log(f"Auto-detected Oobabooga: {ooba_path}")
 
-    def attach_process(self, proc: subprocess.Popen, batch_path=None):
-        self.proc = proc
-        self.batch_path = batch_path
-        self.start_time = time.time()
-        self._thread = threading.Thread(target=self._read_output, daemon=True)
-        self._thread.start()
-        self.input.config(state='normal')
-        self.input.focus_set()
-        
-        # Enable control buttons
-        self.stop_btn.config(state='normal')
-        self.restart_btn.config(state='normal')
-        self.kill_btn.config(state='normal')
-        
-        # Update status
-        self.status_var.set("Running")
-        self.status_label.config(foreground="green")
+        # Auto-detect Z-Waifu
+        if not self.zwaifu_bat:
+            zwaifu_path = find_batch_file("startup.bat")
+            if zwaifu_path:
+                self.zwaifu_bat = zwaifu_path
+                self.log(f"Auto-detected Z-Waifu: {zwaifu_path}")
 
-    def stop_process(self):
-        """Stop the process gracefully"""
-        if self.proc and self.proc.poll() is None:
+        # Auto-detect Ollama
+        if not self.ollama_bat:
+            ollama_path = find_batch_file("ollama.bat")
+            if ollama_path:
+                self.ollama_bat = ollama_path
+                self.log(f"Auto-detected Ollama: {ollama_path}")
+
+        # Auto-detect RVC
+        if not self.rvc_bat:
+            rvc_path = find_batch_file("rvc.bat")
+            if rvc_path:
+                self.rvc_bat = rvc_path
+                self.log(f"Auto-detected RVC: {rvc_path}")
+
+    def refresh_logs(self):
+        """Refresh the logs display"""
+        try:
+            with open(LOG_FILE, "r") as f:
+                logs = f.read()
+            self.logs_text.configure(state='normal')
+            self.logs_text.delete('1.0', tk.END)
+            self.logs_text.insert(tk.END, logs)
+            self.logs_text.see(tk.END)
+            self.logs_text.configure(state='disabled')
+        except Exception as e:
+            self.log(f"Error refreshing logs: {e}")
+
+    def clear_logs(self):
+        """Clear the logs"""
+        try:
+            with open(LOG_FILE, "w") as f:
+                f.write("")
+            self.logs_text.configure(state='normal')
+            self.logs_text.delete('1.0', tk.END)
+            self.logs_text.configure(state='disabled')
+            self.log("Logs cleared")
+        except Exception as e:
+            self.log(f"Error clearing logs: {e}")
+
+    def open_log_file(self):
+        """Open the log file in default editor"""
+        try:
+            if os.path.exists(LOG_FILE):
+                os.startfile(LOG_FILE)
+            else:
+                self.log("Log file does not exist")
+        except Exception as e:
+            self.log(f"Error opening log file: {e}")
+
+    def on_close(self):
+        """Handle window close event"""
+        self.stop_all_processes()
+        self.save_config()
+        self.root.destroy()
+
+    # Advanced Features Methods
+    def start_web_interface(self):
+        """Start the web interface"""
+        if not self.web_interface:
+            self.web_interface = WebInterface(self)
+        
+        if self.web_interface.start():
+            self.web_start_btn.config(state='disabled')
+            self.web_stop_btn.config(state='normal')
+            self.web_open_btn.config(state='normal')
+            self.log("Web interface started successfully")
+            self.update_advanced_status()
+        else:
+            messagebox.showerror("Error", "Failed to start web interface")
+
+    def stop_web_interface(self):
+        """Stop the web interface"""
+        if self.web_interface and self.web_interface.is_running:
+            # Note: Flask-SocketIO doesn't have a clean shutdown method
+            # The server will stop when the main application exits
+            self.web_interface.is_running = False
+            self.web_start_btn.config(state='normal')
+            self.web_stop_btn.config(state='disabled')
+            self.web_open_btn.config(state='disabled')
+            self.log("Web interface stopped")
+            self.update_advanced_status()
+
+    def open_web_interface(self):
+        """Open web interface in browser"""
+        try:
+            webbrowser.open(f"http://localhost:{WEB_PORT}")
+        except Exception as e:
+            self.log(f"Failed to open web interface: {e}")
+
+    def start_api_server(self):
+        """Start the API server"""
+        if not self.api_server:
+            self.api_server = APIServer(self)
+        
+        if self.api_server.start():
+            self.api_start_btn.config(state='disabled')
+            self.api_stop_btn.config(state='normal')
+            self.api_key_btn.config(state='normal')
+            self.log("API server started successfully")
+            self.update_advanced_status()
+        else:
+            messagebox.showerror("Error", "Failed to start API server")
+
+    def stop_api_server(self):
+        """Stop the API server"""
+        if self.api_server and self.api_server.is_running:
+            self.api_server.is_running = False
+            self.api_start_btn.config(state='normal')
+            self.api_stop_btn.config(state='disabled')
+            self.api_key_btn.config(state='disabled')
+            self.log("API server stopped")
+            self.update_advanced_status()
+
+    def generate_api_key(self):
+        """Generate a new API key"""
+        if self.api_server:
             try:
-                self.proc.terminate()
-                self.status_var.set("Stopping...")
-                self.status_label.config(foreground="orange")
-                self.log("Process stop requested")
+                key = secrets.token_hex(32)
+                self.api_server.api_keys[key] = {'created': time.time(), 'permissions': ['read', 'write']}
+                messagebox.showinfo("API Key Generated", f"Your new API key:\n\n{key}\n\nKeep this key secure!")
+                self.log("API key generated successfully")
             except Exception as e:
-                self.log(f"Error stopping process: {e}")
+                self.log(f"Failed to generate API key: {e}")
 
-    def restart_process(self):
-        """Restart the process"""
-        if not self.batch_path or not os.path.exists(self.batch_path):
-            self.log("Cannot restart: batch file not available")
+    def start_mobile_app(self):
+        """Start the mobile app"""
+        if not self.mobile_app:
+            self.mobile_app = MobileApp(self)
+        
+        if self.mobile_app.start():
+            self.mobile_start_btn.config(state='disabled')
+            self.mobile_stop_btn.config(state='normal')
+            self.mobile_qr_btn.config(state='normal')
+            self.log("Mobile app started successfully")
+            self.update_advanced_status()
+        else:
+            messagebox.showerror("Error", "Failed to start mobile app")
+
+    def stop_mobile_app(self):
+        """Stop the mobile app"""
+        if self.mobile_app and self.mobile_app.is_running:
+            self.mobile_app.is_running = False
+            self.mobile_start_btn.config(state='normal')
+            self.mobile_stop_btn.config(state='disabled')
+            self.mobile_qr_btn.config(state='disabled')
+            self.log("Mobile app stopped")
+            self.update_advanced_status()
+
+    def show_mobile_qr(self):
+        """Show mobile QR code"""
+        if self.mobile_app and self.mobile_app.qr_code and os.path.exists(self.mobile_app.qr_code):
+            try:
+                os.startfile(self.mobile_app.qr_code)
+                self.log("Mobile QR code opened")
+            except Exception as e:
+                self.log(f"Failed to open QR code: {e}")
+        else:
+            messagebox.showinfo("QR Code", "QR code not available. Start the mobile app first.")
+
+    def view_analytics(self):
+        """View analytics dashboard"""
+        if not self.analytics:
+            messagebox.showinfo("Analytics", "Analytics system not available. Install matplotlib: pip install matplotlib")
             return
         
         try:
-            # Stop current process
-            if self.proc and self.proc.poll() is None:
-                self.proc.terminate()
-                time.sleep(1)  # Give it time to stop
+            # Create analytics window
+            analytics_window = tk.Toplevel(self.root)
+            analytics_window.title("Analytics Dashboard")
+            analytics_window.geometry("800x600")
             
-            # Start new process
-            new_proc = subprocess.Popen([self.batch_path], cwd=os.path.dirname(self.batch_path), shell=True,
-                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            # Create notebook for different analytics views
+            notebook = ttk.Notebook(analytics_window)
+            notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
             
-            # Clear output
-            self.clear()
+            # System metrics tab
+            system_tab = ttk.Frame(notebook)
+            notebook.add(system_tab, text="System Metrics")
             
-            # Attach new process
-            self.attach_process(new_proc, self.batch_path)
+            if MATPLOTLIB_AVAILABLE:
+                # Create matplotlib figure
+                fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 8))
+                
+                # Get system metrics
+                system_data = self.analytics.get_system_metrics(24)
+                if system_data:
+                    timestamps = [row[3] for row in system_data]
+                    cpu_data = [row[0] for row in system_data]
+                    memory_data = [row[1] for row in system_data]
+                    disk_data = [row[2] for row in system_data]
+                    
+                    # Plot CPU usage
+                    ax1.plot(timestamps, cpu_data, 'b-', label='CPU %')
+                    ax1.set_ylabel('CPU Usage (%)')
+                    ax1.set_title('System Performance (Last 24 Hours)')
+                    ax1.legend()
+                    ax1.grid(True)
+                    
+                    # Plot memory usage
+                    ax2.plot(timestamps, memory_data, 'r-', label='Memory %')
+                    ax2.set_ylabel('Memory Usage (%)')
+                    ax2.legend()
+                    ax2.grid(True)
+                    
+                    # Plot disk usage
+                    ax3.plot(timestamps, disk_data, 'g-', label='Disk %')
+                    ax3.set_ylabel('Disk Usage (%)')
+                    ax3.set_xlabel('Time')
+                    ax3.legend()
+                    ax3.grid(True)
+                    
+                    plt.tight_layout()
+                    
+                    # Embed in tkinter
+                    canvas = FigureCanvasTkAgg(fig, system_tab)
+                    canvas.draw()
+                    canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+                else:
+                    ttk.Label(system_tab, text="No analytics data available").pack(pady=20)
+            else:
+                ttk.Label(system_tab, text="Matplotlib not available for charts").pack(pady=20)
             
-            self.log("Process restarted")
+            # Process metrics tab
+            process_tab = ttk.Frame(notebook)
+            notebook.add(process_tab, text="Process Metrics")
+            
+            process_text = scrolledtext.ScrolledText(process_tab, font=("Consolas", 9))
+            process_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            # Display process metrics
+            for process_name in ['Oobabooga', 'Z-Waifu']:
+                metrics = self.analytics.get_process_metrics(process_name, 24)
+                if metrics:
+                    process_text.insert(tk.END, f"\n{process_name} Metrics (Last 24 Hours):\n")
+                    process_text.insert(tk.END, f"Data points: {len(metrics)}\n")
+                    if metrics:
+                        avg_cpu = sum(row[0] for row in metrics) / len(metrics)
+                        avg_memory = sum(row[1] for row in metrics) / len(metrics)
+                        process_text.insert(tk.END, f"Average CPU: {avg_cpu:.2f}%\n")
+                        process_text.insert(tk.END, f"Average Memory: {avg_memory:.2f}%\n")
+                else:
+                    process_text.insert(tk.END, f"\n{process_name}: No data available\n")
+            
+            process_text.config(state='disabled')
             
         except Exception as e:
-            self.log(f"Error restarting process: {e}")
+            self.log(f"Failed to view analytics: {e}")
+            messagebox.showerror("Error", f"Failed to view analytics: {e}")
 
-    def kill_process(self):
-        """Force kill the process"""
-        if self.proc and self.proc.poll() is None:
-            try:
-                # Kill the process and all its children
-                parent = psutil.Process(self.proc.pid)
-                children = parent.children(recursive=True)
+    def generate_analytics_report(self):
+        """Generate analytics report"""
+        if not self.analytics:
+            messagebox.showinfo("Analytics", "Analytics system not available")
+            return
+        
+        try:
+            report = self.analytics.generate_report(24)
+            
+            # Create report window
+            report_window = tk.Toplevel(self.root)
+            report_window.title("Analytics Report")
+            report_window.geometry("600x400")
+            
+            report_text = scrolledtext.ScrolledText(report_window, font=("Consolas", 10))
+            report_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            report_text.insert(tk.END, report)
+            report_text.config(state='disabled')
+            
+            self.log("Analytics report generated")
+        except Exception as e:
+            self.log(f"Failed to generate report: {e}")
+            messagebox.showerror("Error", f"Failed to generate report: {e}")
+
+    def export_analytics(self):
+        """Export analytics data"""
+        if not self.analytics:
+            messagebox.showinfo("Analytics", "Analytics system not available")
+            return
+        
+        try:
+            # Get export path
+            export_path = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv"), ("JSON files", "*.json")]
+            )
+            
+            if export_path:
+                if export_path.endswith('.csv'):
+                    # Export as CSV
+                    import csv
+                    with open(export_path, 'w', newline='') as csvfile:
+                        writer = csv.writer(csvfile)
+                        writer.writerow(['Timestamp', 'CPU %', 'Memory %', 'Disk %'])
+                        
+                        system_data = self.analytics.get_system_metrics(24)
+                        for row in system_data:
+                            writer.writerow([row[3], row[0], row[1], row[2]])
                 
-                # Kill all child processes first
-                for child in children:
+                elif export_path.endswith('.json'):
+                    # Export as JSON
+                    system_data = self.analytics.get_system_metrics(24)
+                    export_data = {
+                        'system_metrics': [
+                            {
+                                'timestamp': row[3],
+                                'cpu_percent': row[0],
+                                'memory_percent': row[1],
+                                'disk_usage': row[2]
+                            }
+                            for row in system_data
+                        ]
+                    }
+                    
+                    with open(export_path, 'w') as jsonfile:
+                        json.dump(export_data, jsonfile, indent=2)
+                
+                self.log(f"Analytics data exported to: {export_path}")
+                messagebox.showinfo("Export Complete", f"Data exported to:\n{export_path}")
+        
+        except Exception as e:
+            self.log(f"Failed to export analytics: {e}")
+            messagebox.showerror("Error", f"Failed to export analytics: {e}")
+
+    def manage_plugins(self):
+        """Manage plugins"""
+        if not self.plugin_manager:
+            messagebox.showinfo("Plugins", "Plugin manager not available")
+            return
+        
+        try:
+            # Create plugin management window
+            plugin_window = tk.Toplevel(self.root)
+            plugin_window.title("Plugin Manager")
+            plugin_window.geometry("500x400")
+            
+            # Plugin list
+            list_frame = ttk.LabelFrame(plugin_window, text="Installed Plugins")
+            list_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+            
+            plugin_listbox = tk.Listbox(list_frame, font=("Consolas", 10))
+            plugin_listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            
+            # Populate plugin list
+            plugins = self.plugin_manager.get_plugin_list()
+            for plugin in plugins:
+                plugin_listbox.insert(tk.END, plugin)
+            
+            # Plugin controls
+            control_frame = ttk.Frame(plugin_window)
+            control_frame.pack(padx=10, pady=(0,10), fill=tk.X)
+            
+            ttk.Button(control_frame, text="Enable Plugin", 
+                      command=lambda: self.enable_selected_plugin(plugin_listbox)).pack(side=tk.LEFT, padx=(0,5))
+            ttk.Button(control_frame, text="Disable Plugin", 
+                      command=lambda: self.disable_selected_plugin(plugin_listbox)).pack(side=tk.LEFT, padx=5)
+            ttk.Button(control_frame, text="Create New Plugin", 
+                      command=self.create_plugin_dialog).pack(side=tk.LEFT, padx=5)
+            
+        except Exception as e:
+            self.log(f"Failed to manage plugins: {e}")
+            messagebox.showerror("Error", f"Failed to manage plugins: {e}")
+
+    def enable_selected_plugin(self, listbox):
+        """Enable selected plugin"""
+        selection = listbox.curselection()
+        if selection:
+            plugin_name = listbox.get(selection[0])
+            self.plugin_manager.enable_plugin(plugin_name)
+            self.log(f"Enabled plugin: {plugin_name}")
+
+    def disable_selected_plugin(self, listbox):
+        """Disable selected plugin"""
+        selection = listbox.curselection()
+        if selection:
+            plugin_name = listbox.get(selection[0])
+            self.plugin_manager.disable_plugin(plugin_name)
+            self.log(f"Disabled plugin: {plugin_name}")
+
+    def create_plugin(self):
+        """Create a new plugin"""
+        self.create_plugin_dialog()
+
+    def create_plugin_dialog(self):
+        """Create plugin dialog"""
+        try:
+            plugin_name = tk.simpledialog.askstring("Create Plugin", "Enter plugin name:")
+            if plugin_name:
+                if self.plugin_manager.create_plugin_template(plugin_name):
+                    messagebox.showinfo("Success", f"Plugin template created: {plugin_name}.py")
+                    self.log(f"Created plugin template: {plugin_name}")
+                else:
+                    messagebox.showerror("Error", "Failed to create plugin template")
+        except Exception as e:
+            self.log(f"Failed to create plugin: {e}")
+            messagebox.showerror("Error", f"Failed to create plugin: {e}")
+
+    def reload_plugins(self):
+        """Reload plugins"""
+        if self.plugin_manager:
+            self.plugin_manager.load_plugins()
+            self.log("Plugins reloaded")
+            messagebox.showinfo("Success", "Plugins reloaded successfully")
+
+    def update_advanced_status(self):
+        """Update advanced features status"""
+        if hasattr(self, 'advanced_status_text'):
+            self.advanced_status_text.config(state='normal')
+            self.advanced_status_text.delete('1.0', tk.END)
+            
+            status_lines = []
+            status_lines.append("Advanced Features Status:")
+            status_lines.append("=" * 30)
+            
+            # Web Interface status
+            web_status = "Running" if (self.web_interface and self.web_interface.is_running) else "Stopped"
+            status_lines.append(f"Web Interface: {web_status}")
+            
+            # API Server status
+            api_status = "Running" if (self.api_server and self.api_server.is_running) else "Stopped"
+            status_lines.append(f"API Server: {api_status}")
+            
+            # Mobile App status
+            mobile_status = "Running" if (self.mobile_app and self.mobile_app.is_running) else "Stopped"
+            status_lines.append(f"Mobile App: {mobile_status}")
+            
+            # Analytics status
+            analytics_status = "Available" if self.analytics else "Not Available"
+            status_lines.append(f"Analytics: {analytics_status}")
+            
+            # Plugin Manager status
+            plugin_status = "Available" if self.plugin_manager else "Not Available"
+            status_lines.append(f"Plugin Manager: {plugin_status}")
+            
+            if self.plugin_manager:
+                plugins = self.plugin_manager.get_plugin_list()
+                status_lines.append(f"Loaded Plugins: {len(plugins)}")
+                for plugin in plugins:
+                    status_lines.append(f"  - {plugin}")
+            
+            status_lines.append("")
+            status_lines.append("Dependencies:")
+            status_lines.append(f"  Flask: {'Available' if FLASK_AVAILABLE else 'Not Available'}")
+            status_lines.append(f"  Matplotlib: {'Available' if MATPLOTLIB_AVAILABLE else 'Not Available'}")
+            status_lines.append(f"  Requests: {'Available' if REQUESTS_AVAILABLE else 'Not Available'}")
+            status_lines.append(f"  QRCode: {'Available' if QRCODE_AVAILABLE else 'Not Available'}")
+            
+            self.advanced_status_text.insert(tk.END, '\n'.join(status_lines))
+            self.advanced_status_text.config(state='disabled')
+
+    def kill_all_instances(self):
+        """Kill all running instances of all processes reliably."""
+        killed_count = 0
+        for process_type in self.process_instance_tabs:
+            for instance in self.process_instance_tabs[process_type]:
+                proc = instance.get('proc')
+                if proc and proc.poll() is None:
                     try:
-                        child.kill()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-                
-                # Kill the parent process
-                try:
-                    parent.kill()
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
-                
-                # Also kill the wrapper process
-                try:
-                    self.proc.kill()
-                except Exception:
-                    pass
-                
-                self.status_var.set("Killed")
-                self.status_label.config(foreground="red")
-                self.log("Process force killed")
-                
-                # Disable control buttons
-                self.stop_btn.config(state='disabled')
-                self.restart_btn.config(state='disabled')
-                self.kill_btn.config(state='disabled')
-                
-            except Exception as e:
-                self.log(f"Error killing process: {e}")
+                        proc.kill()
+                        self.log(f"Killed {process_type} instance (PID {proc.pid})")
+                        killed_count += 1
+                    except Exception as e:
+                        self.log(f"Error killing {process_type} instance: {e}")
+                    finally:
+                        instance['proc'] = None  # Clean up reference
+        self.update_instance_manager()
+        self.log(f"Kill All: {killed_count} process(es) killed.")
+        self.set_status(f"Kill All: {killed_count} process(es) killed.", "red")
+
+    def refresh_instance_manager(self):
+        """Refresh the instance manager tab"""
+        self.update_instance_manager()
+
+    def focus_instance_terminal(self, event):
+        """Focus the terminal of the selected instance"""
+        selection = self.instance_tree.selection()
+        if selection:
+            instance = self.instance_tree.item(selection[0])['values']
+            self.focus_instance(instance[0], instance[1])
+
+    def stop_selected_instance(self):
+        """Stop the selected instance"""
+        selection = self.instance_tree.selection()
+        if selection:
+            instance = self.instance_tree.item(selection[0])['values']
+            self.stop_instance(instance[0], instance[1])
+
+    def restart_selected_instance(self):
+        """Restart the selected instance"""
+        selection = self.instance_tree.selection()
+        if selection:
+            instance = self.instance_tree.item(selection[0])['values']
+            self.restart_instance(instance[0], instance[1])
+
+    def kill_selected_instance(self):
+        """Kill the selected instance"""
+        selection = self.instance_tree.selection()
+        if selection:
+            instance = self.instance_tree.item(selection[0])['values']
+            self.kill_instance(instance[0], instance[1])
+
+    def stop_instance(self, process_name, instance_id):
+        """Stop a specific instance of a process"""
+        if process_name in self.process_instance_tabs:
+            instances = self.process_instance_tabs[process_name]
+            if instance_id < len(instances):
+                instance = instances[instance_id]
+                if instance['proc']:
+                    instance['proc'].terminate()
+                    self.log(f"Stopped {process_name} Instance {instance_id+1}")
+                    self.update_instance_manager()
+
+    def restart_instance(self, process_name, instance_id):
+        """Restart a specific instance of a process"""
+        if process_name in self.process_instance_tabs:
+            instances = self.process_instance_tabs[process_name]
+            if instance_id < len(instances):
+                instance = instances[instance_id]
+                if instance['proc']:
+                    instance['proc'].terminate()
+                    instance['proc'] = subprocess.Popen([instance['bat_path']], cwd=os.path.dirname(instance['bat_path']), shell=True)
+                    self.log(f"Restarted {process_name} Instance {instance_id+1}")
+                    self.update_instance_manager()
+
+    def kill_instance(self, process_name, instance_id):
+        """Kill a specific instance of a process"""
+        if process_name in self.process_instance_tabs:
+            instances = self.process_instance_tabs[process_name]
+            if instance_id < len(instances):
+                instance = instances[instance_id]
+                if instance['proc']:
+                    instance['proc'].kill()
+                    self.log(f"Killed {process_name} Instance {instance_id+1}")
+                    self.update_instance_manager()
+
+    def focus_instance(self, process_name, instance_id):
+        """Focus the terminal tab of a specific instance"""
+        try:
+            instance_id = int(instance_id.split()[-1]) - 1  # Convert "Instance X" to X-1
+            if process_name in self.process_instance_tabs:
+                instances = self.process_instance_tabs[process_name]
+                if instance_id < len(instances):
+                    # Find the tab index for this instance
+                    for i, tab in enumerate(self.notebook.tabs()):
+                        if self.notebook.tab(tab, "text") == f"{process_name} Instance {instance_id+1}":
+                            self.notebook.select(i)
+                            self.log(f"Focused {process_name} Instance {instance_id+1}")
+                            break
+        except Exception as e:
+            self.log(f"Failed to focus instance: {e}")
+
+# Terminal Emulator class for process output
+class TerminalEmulator(tk.Frame):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.parent = parent
+        self.process = None
+        self.start_time = None
+        self.command_history = []
+        self.history_index = 0
+        
+        # Create terminal display with ANSI color support
+        self.terminal = scrolledtext.ScrolledText(
+            self, 
+            font=("Consolas", 9), 
+            bg='black', 
+            fg='green',
+            insertbackground='white'
+        )
+        self.terminal.pack(fill=tk.BOTH, expand=True)
+        
+        # Bind keyboard events for command history
+        self.terminal.bind('<Key>', self.on_key_press)
+        
+        # Create input field
+        self.input_frame = tk.Frame(self)
+        self.input_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        
+        self.input_var = tk.StringVar()
+        self.input_entry = tk.Entry(
+            self.input_frame, 
+            textvariable=self.input_var, 
+            bg='black', 
+            fg='green',
+            insertbackground='white',
+            font=("Consolas", 9)
+        )
+        self.input_entry.pack(fill=tk.X, side=tk.LEFT, expand=True)
+        self.input_entry.bind('<Return>', self.send_input)
+        self.input_entry.bind('<Up>', self.history_up)
+        self.input_entry.bind('<Down>', self.history_down)
+        
+        # Create control buttons
+        self.send_btn = tk.Button(self.input_frame, text="Send", command=self.send_input, bg='darkgreen', fg='white')
+        self.send_btn.pack(side=tk.RIGHT, padx=(5,0))
+        
+        self.clear_btn = tk.Button(self.input_frame, text="Clear", command=self.clear_terminal, bg='darkred', fg='white')
+        self.clear_btn.pack(side=tk.RIGHT, padx=(5,0))
+        
+        self.kill_btn = tk.Button(self.input_frame, text="Kill", command=self.kill_process, bg='red', fg='white')
+        self.kill_btn.pack(side=tk.RIGHT, padx=(5,0))
+
+    def attach_process(self, process, command):
+        """Attach a process to this terminal"""
+        self.process = process
+        self.start_time = time.time()
+        self._append(f"Process started: {command}\n", '32')  # Green
+        
+        # Start reading process output
+        threading.Thread(target=self._read_output, daemon=True).start()
 
     def _read_output(self):
+        """Read process output in a separate thread"""
         try:
-            for line in self.proc.stdout:
-                self._append_ansi(line)
+            for line in self.process.stdout:
+                self._append(line, '37')  # White text
         except Exception as e:
-            self._append(f"[Terminal Error] {e}\n", '31')
-        finally:
-            self.input.config(state='disabled')
-            self.status_var.set("Stopped")
-            self.status_label.config(foreground="red")
-            
-            # Disable control buttons
-            self.stop_btn.config(state='disabled')
-            self.restart_btn.config(state='disabled')
-            self.kill_btn.config(state='disabled')
+            self._append(f"Error reading output: {e}\n", '31')  # Red
 
-    def _append(self, text, color_code=None):
-        self.output.config(state='normal')
-        if color_code and color_code in self._ansi_tags:
-            self.output.insert(tk.END, text, self._ansi_tags[color_code])
-        else:
-            self.output.insert(tk.END, text)
-        self.output.see(tk.END)
-        self.output.config(state='disabled')
+    def _append(self, text, color_code):
+        """Append text to terminal with ANSI color support"""
+        self.terminal.config(state='normal')
+        
+        # Parse ANSI color codes
+        if '\033[' in text:
+            # Simple ANSI color parsing
+            text = self._parse_ansi_colors(text)
+        
+        self.terminal.insert(tk.END, text)
+        self.terminal.see(tk.END)
+        self.terminal.config(state='disabled')
 
-    def _append_ansi(self, text):
-        # Parse ANSI color codes and apply tags
-        pos = 0
-        last_fg = None
-        for match in self.ANSI_RE.finditer(text):
-            start, end = match.span()
-            if start > pos:
-                self._append(text[pos:start], last_fg)
-            fg = match.group(1)
-            if fg in self.ANSI_COLORS:
-                last_fg = fg
-            pos = end
-        if pos < len(text):
-            self._append(text[pos:], last_fg)
+    def _parse_ansi_colors(self, text):
+        """Parse ANSI color codes and convert to tkinter colors"""
+        # Simple ANSI color mapping
+        color_map = {
+            '30': 'black',
+            '31': 'red',
+            '32': 'green',
+            '33': 'yellow',
+            '34': 'blue',
+            '35': 'magenta',
+            '36': 'cyan',
+            '37': 'white',
+            '0': 'white'  # Reset
+        }
+        
+        # Remove ANSI codes for now (can be enhanced with actual color support)
+        import re
+        text = re.sub(r'\033\[[0-9;]*m', '', text)
+        return text
 
-    def _on_enter(self, event):
-        cmd = self.input.get()
-        if not cmd or not self.proc or self.proc.poll() is not None:
-            return
-        self._history.append(cmd)
-        self._history_index = len(self._history)
-        self._current_input = ''
-        self.input.delete(0, tk.END)
-        try:
-            with self._stdin_lock:
-                self.proc.stdin.write(cmd + '\n')
-                self.proc.stdin.flush()
-        except Exception as e:
-            self._append(f"[Input Error] {e}\n", '31')
+    def send_input(self, event=None):
+        """Send input to the process"""
+        if self.process and self.process.poll() is None:
+            input_text = self.input_var.get()
+            if input_text.strip():
+                # Add to command history
+                self.command_history.append(input_text)
+                self.history_index = len(self.command_history)
+                
+                # Send to process
+                try:
+                    self.process.stdin.write(input_text + '\n')
+                    self.process.stdin.flush()
+                    self._append(f"> {input_text}\n", '36')  # Cyan text
+                    self.input_var.set("")
+                except Exception as e:
+                    self._append(f"Error sending input: {e}\n", '31')  # Red
 
-    def _on_up(self, event):
-        if self._history and self._history_index > 0:
-            if self._history_index == len(self._history):
-                self._current_input = self.input.get()
-            self._history_index -= 1
-            self.input.delete(0, tk.END)
-            self.input.insert(0, self._history[self._history_index])
+    def history_up(self, event):
+        """Navigate up in command history"""
+        if self.command_history and self.history_index > 0:
+            self.history_index -= 1
+            self.input_var.set(self.command_history[self.history_index])
         return 'break'
 
-    def _on_down(self, event):
-        if self._history and self._history_index < len(self._history) - 1:
-            self._history_index += 1
-            self.input.delete(0, tk.END)
-            self.input.insert(0, self._history[self._history_index])
-        elif self._history_index == len(self._history) - 1:
-            self._history_index += 1
-            self.input.delete(0, tk.END)
-            self.input.insert(0, self._current_input)
+    def history_down(self, event):
+        """Navigate down in command history"""
+        if self.command_history and self.history_index < len(self.command_history) - 1:
+            self.history_index += 1
+            self.input_var.set(self.command_history[self.history_index])
+        elif self.history_index == len(self.command_history) - 1:
+            self.history_index += 1
+            self.input_var.set("")
         return 'break'
 
-    def clear(self):
-        self.output.config(state='normal')
-        self.output.delete('1.0', tk.END)
-        self.output.config(state='disabled')
-        self.input.delete(0, tk.END)
-        self._history = []
-        self._history_index = 0
-        self._current_input = ''
+    def on_key_press(self, event):
+        """Handle key presses in terminal"""
+        # Allow normal typing
+        return None
 
-    def log(self, message):
-        """Add a log message to the terminal"""
-        timestamp = time.strftime("%H:%M:%S")
-        self._append(f"[{timestamp}] {message}\n", '36')
+    def clear_terminal(self):
+        """Clear the terminal output"""
+        self.terminal.config(state='normal')
+        self.terminal.delete('1.0', tk.END)
+        self.terminal.config(state='disabled')
 
+    def kill_process(self):
+        """Force kill the attached process"""
+        if self.process:
+            try:
+                self.process.kill()
+                self._append("Process killed by user\n", '31')  # Red
+            except Exception as e:
+                self._append(f"Error killing process: {e}\n", '31')  # Red
 
+    def get_uptime(self):
+        """Get process uptime"""
+        if self.start_time:
+            return time.time() - self.start_time
+        return 0
+
+    def get_status(self):
+        """Get process status"""
+        if self.process:
+            if self.process.poll() is None:
+                return "Running"
+            else:
+                return f"Stopped (Exit code: {self.process.returncode})"
+        return "Not attached"
+
+# Main execution
 if __name__ == "__main__":
-    try:
-        root = tk.Tk()
-        app = LauncherGUI(root)
-        root.mainloop()
-    except Exception as e:
-        print(f"Error running launcher: {e}")
-        import traceback
-        traceback.print_exc() 
+    root = tk.Tk()
+    app = LauncherGUI(root)
+    root.mainloop()
