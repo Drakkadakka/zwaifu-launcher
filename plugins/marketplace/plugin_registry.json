@@ -1,0 +1,104 @@
+{
+  "last_updated": "2025-07-15T08:29:34.696671",
+  "plugins": {
+    "process_monitor": {
+      "name": "Process Monitor",
+      "version": "1.0.0",
+      "description": "Advanced process monitoring with alerts",
+      "author": "Z-Waifu Team",
+      "category": "monitoring",
+      "tags": [
+        "monitoring",
+        "alerts",
+        "process"
+      ],
+      "dependencies": [
+        "psutil>=5.8.0"
+      ],
+      "download_url": "https://github.com/zwaifu-launcher/plugins/raw/main/process_monitor.zip",
+      "documentation_url": "https://github.com/zwaifu-launcher/plugins/blob/main/process_monitor/README.md",
+      "rating": 4.5,
+      "downloads": 1250,
+      "last_updated": "2024-01-15T10:30:00Z"
+    },
+    "auto_restart": {
+      "name": "Auto Restart",
+      "version": "1.1.0",
+      "description": "Automatically restart processes on failure",
+      "author": "Z-Waifu Team",
+      "category": "automation",
+      "tags": [
+        "automation",
+        "restart",
+        "reliability"
+      ],
+      "dependencies": [],
+      "download_url": "https://github.com/zwaifu-launcher/plugins/raw/main/auto_restart.zip",
+      "documentation_url": "https://github.com/zwaifu-launcher/plugins/blob/main/auto_restart/README.md",
+      "rating": 4.2,
+      "downloads": 890,
+      "last_updated": "2024-01-10T14:20:00Z"
+    },
+    "performance_analyzer": {
+      "name": "Performance Analyzer",
+      "version": "1.0.0",
+      "description": "Advanced performance analysis and optimization",
+      "author": "Z-Waifu Team",
+      "category": "analytics",
+      "tags": [
+        "analytics",
+        "performance",
+        "optimization"
+      ],
+      "dependencies": [
+        "matplotlib>=3.5.0",
+        "numpy>=1.21.0"
+      ],
+      "download_url": "https://github.com/zwaifu-launcher/plugins/raw/main/performance_analyzer.zip",
+      "documentation_url": "https://github.com/zwaifu-launcher/plugins/blob/main/performance_analyzer/README.md",
+      "rating": 4.7,
+      "downloads": 2100,
+      "last_updated": "2024-01-20T09:15:00Z"
+    },
+    "backup_manager": {
+      "name": "Backup Manager",
+      "version": "1.0.0",
+      "description": "Automated backup and restore functionality",
+      "author": "Z-Waifu Team",
+      "category": "backup",
+      "tags": [
+        "backup",
+        "restore",
+        "automation"
+      ],
+      "dependencies": [
+        "cryptography>=3.4.0"
+      ],
+      "download_url": "https://github.com/zwaifu-launcher/plugins/raw/main/backup_manager.zip",
+      "documentation_url": "https://github.com/zwaifu-launcher/plugins/blob/main/backup_manager/README.md",
+      "rating": 4.3,
+      "downloads": 750,
+      "last_updated": "2024-01-12T16:45:00Z"
+    },
+    "notification_center": {
+      "name": "Notification Center",
+      "version": "1.0.0",
+      "description": "Centralized notification management",
+      "author": "Z-Waifu Team",
+      "category": "notifications",
+      "tags": [
+        "notifications",
+        "alerts",
+        "ui"
+      ],
+      "dependencies": [
+        "plyer>=2.0.0"
+      ],
+      "download_url": "https://github.com/zwaifu-launcher/plugins/raw/main/notification_center.zip",
+      "documentation_url": "https://github.com/zwaifu-launcher/plugins/blob/main/notification_center/README.md",
+      "rating": 4.1,
+      "downloads": 680,
+      "last_updated": "2024-01-08T11:30:00Z"
+    }
+  }
+}
