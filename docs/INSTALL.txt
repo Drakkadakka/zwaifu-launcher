@@ -1,0 +1,47 @@
+Z Launcher - Installation Guide
+==============================
+
+NEW FEATURES & IMPROVEMENTS:
+----------------------------
+- Per-process Start/Stop/Restart controls and status indicators
+- Auto-detection of batch files on first run
+- Port availability check before launching Oobabooga
+- Enhanced log viewer (Refresh/Clear, last 200 lines)
+- Settings persistence for all user preferences
+- Graceful shutdown with process stop prompt
+- User-friendly error dialogs for common issues
+- Clickable About tab links
+- Robust error handling and error logging
+
+QUICK START:
+1. Extract all files to a folder
+2. Double-click "setup_venv_and_run_launcher.bat"
+3. The launcher will start automatically!
+
+REQUIREMENTS:
+- Windows 10/11
+- Python 3.8+ (download from python.org if not installed)
+
+WHAT'S INCLUDED:
+- zwaifu_launcher_gui.py (main launcher script)
+- setup_venv_and_run_launcher.bat (auto-setup and run script)
+- requirements.txt (Python dependencies)
+- README.md (detailed documentation)
+- LICENSE (MIT license)
+
+FEATURES:
+- Multi-tab GUI for Oobabooga, Z-Waifu, Ooba-LLaMA, and RVC
+- Dark/Light mode toggle
+- System tray support
+- Real-time logging
+- Batch file configuration
+
+TROUBLESHOOTING:
+- If you get "python not found" errors, install Python from python.org
+- If the launcher doesn't start, check launcher_error.log for details
+- Make sure to select your batch files in the GUI after first launch
+
+AUTHOR:
+Drakkadakka - https://github.com/Drakkadakka
+
+For more help, see README.md or visit the GitHub page! 
