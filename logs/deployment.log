@@ -1,0 +1,31 @@
+[2025-07-14 01:46:48] Starting production deployment...
+[2025-07-14 01:46:48] Creating backup of current production files...
+[2025-07-14 01:46:48] Backed up: zwaifu_launcher_gui.py
+[2025-07-14 01:46:48] Backed up: config/launcher_config.json
+[2025-07-14 01:46:48] Backed up: data/launcher_log.txt
+[2025-07-14 01:46:48] Backup created successfully: D:\ZWAIFU-PROJECT\backups\backup_20250714_014648
+[2025-07-14 01:46:48] Verifying bug fixes...
+[2025-07-14 01:46:48] ❌ Bug fix tests failed: Traceback (most recent call last):
+  File "D:\ZWAIFU-PROJECT\test_fixes.py", line 45, in test_config_save_load
+    print("\u2705 Config save/load test passed")
+  File "C:\Users\drakkka\python\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2705' in position 0: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\ZWAIFU-PROJECT\test_fixes.py", line 469, in <module>
+    main() 
+    ^^^^^^
+  File "D:\ZWAIFU-PROJECT\test_fixes.py", line 454, in main
+    test_config_save_load()
+  File "D:\ZWAIFU-PROJECT\test_fixes.py", line 48, in test_config_save_load
+    print(f"\u274c Config save/load test failed: {e}")
+  File "C:\Users\drakkka\python\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u274c' in position 0: character maps to <undefined>
+
+[2025-07-14 01:46:48] ERROR: Bug fix verification failed
