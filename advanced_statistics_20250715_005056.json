@@ -1,0 +1,26 @@
+{
+  "timestamp": "2025-07-15T00:50:56.768700",
+  "system": {
+    "cpu_percent": 13.0,
+    "memory_percent": 60.6,
+    "disk_percent": 76.8,
+    "uptime": 0
+  },
+  "processes": {
+    "oobabooga_instances": 0,
+    "zwaifu_instances": 0,
+    "ollama_instances": 0,
+    "rvc_instances": 0
+  },
+  "services": {
+    "web_interface": false,
+    "api_server": null,
+    "mobile_app": null,
+    "analytics": true
+  },
+  "configuration": {
+    "dark_mode": true,
+    "current_theme": "dark",
+    "total_tabs": 11
+  }
+}

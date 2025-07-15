@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Z-Waifu Launcher Setup and Runner
-This script handles virtual environment setup and launches the main GUI.
+This script handles virtual environment setup, dependency installation, and launches the main GUI.
+Updated to work with the correct project structure and automatically install dependencies.
 """
 
 import os
@@ -9,6 +10,9 @@ import sys
 import subprocess
 import venv
 from pathlib import Path
+
+# Get the project root directory
+PROJECT_ROOT = Path(__file__).parent
 
 def check_python_version():
     """Check if Python version is compatible"""
@@ -20,99 +24,142 @@ def check_python_version():
 
 def create_virtual_environment():
     """Create virtual environment if it doesn't exist"""
-    venv_path = Path("venv")
+    venv_path = PROJECT_ROOT / "venv"
     if not venv_path.exists():
         print("Creating virtual environment...")
         try:
-            venv.create("venv", with_pip=True)
+            venv.create(venv_path, with_pip=True)
             print("Virtual environment created successfully!")
             return True
         except Exception as e:
-            print(f"ERROR: Failed to create virtual environment: {e}")
+            print(f"Failed to create virtual environment: {e}")
             return False
     return True
 
 def get_venv_python():
-    """Get the path to the virtual environment Python executable"""
-    if os.name == 'nt':  # Windows
-        return Path("venv/Scripts/python.exe")
-    else:  # Unix/Linux/Mac
-        return Path("venv/bin/python")
+    """Get the Python executable path for the virtual environment"""
+    if sys.platform == "win32":
+        return PROJECT_ROOT / "venv" / "Scripts" / "python.exe"
+    else:
+        return PROJECT_ROOT / "venv" / "bin" / "python"
+
+def get_venv_pip():
+    """Get the pip executable path for the virtual environment"""
+    if sys.platform == "win32":
+        return PROJECT_ROOT / "venv" / "Scripts" / "pip.exe"
+    else:
+        return PROJECT_ROOT / "venv" / "bin" / "pip"
+
+def check_dependencies():
+    """Check if required dependencies are installed"""
+    venv_python = get_venv_python()
+    if not venv_python.exists():
+        return False
+    
+    try:
+        # Check for key dependencies
+        result = subprocess.run([
+            str(venv_python), "-c", 
+            "import tkinter, json, threading, subprocess, socket, time, os, sys, glob, re, sqlite3, datetime, webbrowser, pystray, PIL, psutil"
+        ], capture_output=True, text=True)
+        return result.returncode == 0
+    except Exception:
+        return False
 
 def install_dependencies():
-    """Install dependencies from requirements.txt"""
-    venv_python = get_venv_python()
-    requirements_file = Path("config/requirements.txt")
-    
-    if not venv_python.exists():
-        print("ERROR: Virtual environment Python not found!")
-        return False
-    
-    if not requirements_file.exists():
-        print("ERROR: requirements.txt not found!")
-        return False
-    
+    """Install dependencies using the install_dependencies script"""
     print("Installing dependencies...")
+    
+    # Check if install_dependencies.py exists
+    install_script = PROJECT_ROOT / "scripts" / "install_dependencies.py"
+    if not install_script.exists():
+        print("ERROR: install_dependencies.py not found!")
+        return False
+    
     try:
-        # Upgrade pip first
-        subprocess.run([str(venv_python), "-m", "pip", "install", "--upgrade", "pip"], 
-                      check=True, capture_output=True, text=True)
+        # Run the install dependencies script
+        result = subprocess.run([sys.executable, str(install_script)], 
+                              cwd=PROJECT_ROOT, 
+                              capture_output=True, 
+                              text=True)
         
-        # Install requirements
-        subprocess.run([str(venv_python), "-m", "pip", "install", "-r", str(requirements_file)], 
-                      check=True, capture_output=True, text=True)
-        
-        print("Dependencies installed successfully!")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: Failed to install dependencies: {e}")
-        print(f"STDOUT: {e.stdout}")
-        print(f"STDERR: {e.stderr}")
+        if result.returncode == 0:
+            print("Dependencies installed successfully!")
+            return True
+        else:
+            print(f"Failed to install dependencies: {result.stderr}")
+            return False
+    except Exception as e:
+        print(f"Error running install dependencies script: {e}")
         return False
 
 def run_launcher():
     """Run the main launcher GUI"""
-    venv_python = get_venv_python()
-    launcher_file = Path("zwaifu_launcher_gui.py")
+    print("Starting Z-Waifu Launcher...")
     
-    if not launcher_file.exists():
+    launcher_script = PROJECT_ROOT / "zwaifu_launcher_gui.py"
+    if not launcher_script.exists():
         print("ERROR: zwaifu_launcher_gui.py not found!")
         return False
     
-    print("Starting Z-Waifu Launcher...")
     try:
-        subprocess.run([str(venv_python), str(launcher_file)], check=True)
+        # Use the virtual environment Python to run the launcher
+        venv_python = get_venv_python()
+        if venv_python.exists():
+            subprocess.run([str(venv_python), str(launcher_script)], cwd=PROJECT_ROOT)
+        else:
+            # Fallback to system Python if venv not available
+            subprocess.run([sys.executable, str(launcher_script)], cwd=PROJECT_ROOT)
         return True
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: Launcher failed to start: {e}")
+    except Exception as e:
+        print(f"Error running launcher: {e}")
         return False
-    except KeyboardInterrupt:
-        print("\nLauncher stopped by user.")
-        return True
 
 def main():
-    """Main function"""
-    print("Z-Waifu Launcher Setup")
-    print("======================")
-    print()
+    """Main setup and launch function"""
+    print("Z-Waifu Launcher Setup and Runner")
+    print("=" * 40)
     
     # Check Python version
     if not check_python_version():
         input("Press Enter to exit...")
         return 1
     
+    # Check project structure
+    if not (PROJECT_ROOT / "zwaifu_launcher_gui.py").exists():
+        print("ERROR: zwaifu_launcher_gui.py not found in project root!")
+        print("Please run this script from the project root directory.")
+        input("Press Enter to exit...")
+        return 1
+    
+    if not (PROJECT_ROOT / "config" / "requirements.txt").exists():
+        print("ERROR: config/requirements.txt not found!")
+        print("Please ensure the project structure is correct.")
+        input("Press Enter to exit...")
+        return 1
+    
+    print("Project structure looks good!")
+    
     # Create virtual environment
     if not create_virtual_environment():
-        input("Press Enter to exit...")
-        return 1
+        print("Failed to create virtual environment. Continuing with system Python...")
     
-    # Install dependencies
-    if not install_dependencies():
-        input("Press Enter to exit...")
-        return 1
+    # Check if dependencies are installed
+    if not check_dependencies():
+        print("Dependencies not found. Installing...")
+        if not install_dependencies():
+            print("Failed to install dependencies!")
+            print("You can try running the install script manually:")
+            print(f"  python {PROJECT_ROOT / 'scripts' / 'install_dependencies.py'}")
+            input("Press Enter to exit...")
+            return 1
+    else:
+        print("Dependencies are already installed!")
     
-    # Run launcher
+    # Run the launcher
+    print("\nLaunching Z-Waifu Launcher...")
     if not run_launcher():
+        print("Failed to start launcher!")
         input("Press Enter to exit...")
         return 1
     

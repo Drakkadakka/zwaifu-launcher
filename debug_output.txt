@@ -1,0 +1,56 @@
+
+--- Checking path: config/test.json ---
+abs_path_norm: 'd:\\zwaifu-project\\config\\test.json'
+project_root_norm: 'd:\\zwaifu-project'
+abs_path_norm == project_root_norm: False
+abs_path_norm.startswith(project_root_norm + os.sep): True
+d:\zwaifu-project\config\test.json is within d:\zwaifu-project
+
+--- Checking path: ../../../etc/passwd ---
+Rejected for '..' in original path: ../../../etc/passwd
+
+--- Checking path: config/../malicious.txt ---
+Rejected for '..' in original path: config/../malicious.txt
+
+--- Checking path: config/*.txt ---
+Rejected for suspicious char in segment: config/*.txt
+
+--- Checking path: config/file.txt%20 ---
+Rejected for suspicious char in segment: config/file.txt%20
+
+--- Checking path: config/file.txt&cmd ---
+Rejected for suspicious char in segment: config/file.txt&cmd
+
+--- Checking path: config/$(rm -rf /) ---
+Rejected for suspicious char in segment: config/$(rm -rf /)
+
+--- Checking path: config/`whoami` ---
+Rejected for suspicious char in segment: config/`whoami`
+
+--- Checking path: config/test.json ---
+abs_path_norm: 'd:\\zwaifu-project\\config\\test.json'
+project_root_norm: 'd:\\zwaifu-project'
+abs_path_norm == project_root_norm: False
+abs_path_norm.startswith(project_root_norm + os.sep): True
+d:\zwaifu-project\config\test.json is within d:\zwaifu-project
+
+--- Checking path: ../../../etc/passwd ---
+Rejected for '..' in original path: ../../../etc/passwd
+
+--- Checking path: config/../malicious.txt ---
+Rejected for '..' in original path: config/../malicious.txt
+
+--- Checking path: config/*.txt ---
+Rejected for suspicious char in segment: config/*.txt
+
+--- Checking path: config/file.txt%20 ---
+Rejected for suspicious char in segment: config/file.txt%20
+
+--- Checking path: config/file.txt&cmd ---
+Rejected for suspicious char in segment: config/file.txt&cmd
+
+--- Checking path: config/$(rm -rf /) ---
+Rejected for suspicious char in segment: config/$(rm -rf /)
+
+--- Checking path: config/`whoami` ---
+Rejected for suspicious char in segment: config/`whoami`

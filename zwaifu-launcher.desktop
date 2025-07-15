@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Z-Waifu Launcher
+Comment=AI Waifu Launcher with Oobabooga and Z-Waifu Integration
+Exec=/usr/bin/env python3 /opt/zwaifu-launcher/launch_launcher.py
+Icon=/opt/zwaifu-launcher/static/images/launcher_icon.png
+Terminal=true
+Categories=Utility;Development;AI;
+Keywords=AI;Waifu;Launcher;Oobabooga;Z-Waifu;
+StartupWMClass=Z-Waifu-Launcher 
