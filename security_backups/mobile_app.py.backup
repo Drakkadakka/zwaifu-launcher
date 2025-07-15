@@ -1,0 +1,623 @@
+#!/usr/bin/env python3
+"""
+Z-Waifu Launcher GUI - Mobile App Interface
+Mobile app for remote monitoring and control.
+"""
+
+import os
+import sys
+import json
+import threading
+import time
+import subprocess
+import psutil
+from datetime import datetime
+from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask_socketio import SocketIO, emit
+import webbrowser
+from typing import Dict, List, Any, Optional
+import logging
+
+# Add the parent directory to the path so we can import the launcher
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+try:
+    from zwaifu_launcher_gui import LauncherGUI, TerminalEmulator
+except ImportError:
+    print("Error: Could not import launcher modules")
+    sys.exit(1)
+
+class MobileApp:
+    def __init__(self, launcher_gui, host='0.0.0.0', port=8081):
+        self.launcher_gui = launcher_gui
+        self.host = host
+        self.port = port
+        self.app = Flask(__name__)
+        self.app.config['SECRET_KEY'] = 'zwaifu-launcher-mobile-app'
+        self.socketio = SocketIO(self.app, cors_allowed_origins="*")
+        
+        # Mobile-specific features
+        self.push_notifications = []
+        self.mobile_sessions = {}
+        
+        # Setup routes
+        self.setup_routes()
+        
+        # Start monitoring thread
+        self.monitoring_active = True
+        self.monitor_thread = threading.Thread(target=self.monitor_for_mobile, daemon=True)
+        self.monitor_thread.start()
+    
+    def setup_routes(self):
+        """Setup Flask routes for mobile app"""
+        
+        @self.app.route('/')
+        def mobile_dashboard():
+            """Mobile dashboard page"""
+            return render_template('mobile_dashboard.html')
+        
+        @self.app.route('/mobile/api/status')
+        def mobile_status():
+            """Get mobile-optimized status"""
+            try:
+                status = {
+                    'timestamp': datetime.now().isoformat(),
+                    'launcher_running': True,
+                    'processes': self.get_mobile_process_status(),
+                    'system_info': self.get_mobile_system_info(),
+                    'notifications': self.get_notifications()
+                }
+                return jsonify(status)
+            except Exception as e:
+                return jsonify({'error': str(e)}), 500
+        
+        @self.app.route('/mobile/api/processes')
+        def mobile_processes():
+            """Get mobile-optimized process list"""
+            try:
+                processes = self.get_mobile_process_status()
+                return jsonify(processes)
+            except Exception as e:
+                return jsonify({'error': str(e)}), 500
+        
+        @self.app.route('/mobile/api/process/<process_type>/<int:instance_id>', methods=['GET', 'POST', 'DELETE'])
+        def mobile_process_control(process_type, instance_id):
+            """Mobile process control"""
+            try:
+                if request.method == 'GET':
+                    status = self.get_process_instance_status(process_type, instance_id)
+                    return jsonify(status)
+                
+                elif request.method == 'POST':
+                    result = self.start_process_instance(process_type, instance_id)
+                    return jsonify(result)
+                
+                elif request.method == 'DELETE':
+                    result = self.stop_process_instance(process_type, instance_id)
+                    return jsonify(result)
+                
+            except Exception as e:
+                return jsonify({'error': str(e)}), 500
+        
+        @self.app.route('/mobile/api/quick-actions', methods=['POST'])
+        def mobile_quick_actions():
+            """Mobile quick actions"""
+            try:
+                data = request.get_json()
+                action = data.get('action')
+                
+                if action == 'start_all':
+                    result = self.start_all_processes()
+                elif action == 'stop_all':
+                    result = self.stop_all_processes()
+                elif action == 'restart_all':
+                    result = self.restart_all_processes()
+                else:
+                    result = {'error': 'Unknown action'}
+                
+                return jsonify(result)
+            except Exception as e:
+                return jsonify({'error': str(e)}), 500
+        
+        @self.app.route('/mobile/api/notifications')
+        def mobile_notifications():
+            """Get mobile notifications"""
+            try:
+                notifications = self.get_notifications()
+                return jsonify(notifications)
+            except Exception as e:
+                return jsonify({'error': str(e)}), 500
+        
+        @self.app.route('/mobile/api/notifications/clear', methods=['POST'])
+        def clear_notifications():
+            """Clear notifications"""
+            try:
+                self.clear_notifications()
+                return jsonify({'success': True})
+            except Exception as e:
+                return jsonify({'error': str(e)}), 500
+        
+        @self.app.route('/mobile/api/terminal/<process_type>/<int:instance_id>')
+        def mobile_terminal(process_type, instance_id):
+            """Get terminal output for mobile"""
+            try:
+                output = self.get_terminal_output(process_type, instance_id)
+                return jsonify({'output': output})
+            except Exception as e:
+                return jsonify({'error': str(e)}), 500
+        
+        @self.app.route('/mobile/api/terminal/<process_type>/<int:instance_id>', methods=['POST'])
+        def mobile_terminal_input(process_type, instance_id):
+            """Send terminal input from mobile"""
+            try:
+                data = request.get_json()
+                command = data.get('command', '')
+                result = self.send_terminal_command(process_type, instance_id, command)
+                return jsonify(result)
+            except Exception as e:
+                return jsonify({'error': str(e)}), 500
+        
+        @self.app.route('/mobile/api/analytics')
+        def mobile_analytics():
+            """Get mobile-optimized analytics"""
+            try:
+                analytics = self.get_mobile_analytics()
+                return jsonify(analytics)
+            except Exception as e:
+                return jsonify({'error': str(e)}), 500
+        
+        @self.app.route('/mobile/api/settings')
+        def mobile_settings():
+            """Get mobile settings"""
+            try:
+                settings = self.get_mobile_settings()
+                return jsonify(settings)
+            except Exception as e:
+                return jsonify({'error': str(e)}), 500
+        
+        @self.app.route('/mobile/api/settings', methods=['PUT'])
+        def update_mobile_settings():
+            """Update mobile settings"""
+            try:
+                data = request.get_json()
+                result = self.update_mobile_settings(data)
+                return jsonify(result)
+            except Exception as e:
+                return jsonify({'error': str(e)}), 500
+        
+        # WebSocket events for mobile
+        @self.socketio.on('mobile_connect')
+        def handle_mobile_connect():
+            """Handle mobile client connection"""
+            session_id = request.sid
+            self.mobile_sessions[session_id] = {
+                'connected_at': datetime.now(),
+                'last_activity': datetime.now()
+            }
+            emit('mobile_status', {'message': 'Connected to Z-Waifu Launcher Mobile'})
+        
+        @self.socketio.on('mobile_disconnect')
+        def handle_mobile_disconnect():
+            """Handle mobile client disconnection"""
+            session_id = request.sid
+            if session_id in self.mobile_sessions:
+                del self.mobile_sessions[session_id]
+        
+        @self.socketio.on('mobile_request_status')
+        def handle_mobile_status_request():
+            """Handle mobile status request"""
+            status = self.get_mobile_process_status()
+            emit('mobile_status_update', status)
+    
+    def get_mobile_process_status(self):
+        """Get mobile-optimized process status"""
+        processes = []
+        
+        if hasattr(self.launcher_gui, 'process_instance_tabs'):
+            for process_type, instances in self.launcher_gui.process_instance_tabs.items():
+                for i, instance_data in enumerate(instances):
+                    tab = instance_data.get('tab')
+                    terminal = instance_data.get('terminal')
+                    proc = instance_data.get('proc')
+                    
+                    status = {
+                        'id': f"{process_type}_{i}",
+                        'type': process_type,
+                        'instance_id': i,
+                        'name': f"{process_type} Instance {i+1}",
+                        'status': 'Running' if proc and proc.poll() is None else 'Stopped',
+                        'pid': proc.pid if proc else None,
+                        'uptime': self.get_process_uptime(terminal),
+                        'cpu_usage': self.get_process_cpu(proc),
+                        'memory_usage': self.get_process_memory(proc),
+                        'icon': self.get_process_icon(process_type),
+                        'color': self.get_process_color(process_type)
+                    }
+                    
+                    processes.append(status)
+        
+        return processes
+    
+    def get_mobile_system_info(self):
+        """Get mobile-optimized system info"""
+        try:
+            return {
+                'cpu_percent': psutil.cpu_percent(interval=1),
+                'memory_percent': psutil.virtual_memory().percent,
+                'disk_percent': psutil.disk_usage('/').percent,
+                'uptime': self.get_system_uptime(),
+                'active_sessions': len(self.mobile_sessions)
+            }
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def get_mobile_analytics(self):
+        """Get mobile-optimized analytics"""
+        try:
+            analytics = {
+                'timestamp': datetime.now().isoformat(),
+                'system': self.get_mobile_system_info(),
+                'processes': self.get_mobile_process_status(),
+                'notifications_count': len(self.push_notifications)
+            }
+            return analytics
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def get_mobile_settings(self):
+        """Get mobile settings"""
+        return {
+            'notifications_enabled': True,
+            'auto_refresh_interval': 5,
+            'dark_mode': True,
+            'compact_view': False,
+            'sound_enabled': True,
+            'vibration_enabled': True
+        }
+    
+    def update_mobile_settings(self, settings):
+        """Update mobile settings"""
+        try:
+            # Update settings logic here
+            return {'success': True, 'message': 'Settings updated'}
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def get_notifications(self):
+        """Get push notifications"""
+        return self.push_notifications[-20:]  # Last 20 notifications
+    
+    def add_notification(self, title, message, level='info'):
+        """Add a push notification"""
+        notification = {
+            'id': len(self.push_notifications),
+            'title': title,
+            'message': message,
+            'level': level,
+            'timestamp': datetime.now().isoformat(),
+            'read': False
+        }
+        self.push_notifications.append(notification)
+        
+        # Emit to all mobile clients
+        self.socketio.emit('mobile_notification', notification)
+    
+    def clear_notifications(self):
+        """Clear all notifications"""
+        self.push_notifications.clear()
+    
+    def get_process_icon(self, process_type):
+        """Get process icon for mobile"""
+        icons = {
+            'Oobabooga': '🤖',
+            'Z-Waifu': '👾',
+            'Ollama': '🦙',
+            'RVC': '🎤'
+        }
+        return icons.get(process_type, '⚙️')
+    
+    def get_process_color(self, process_type):
+        """Get process color for mobile"""
+        colors = {
+            'Oobabooga': '#007bff',
+            'Z-Waifu': '#28a745',
+            'Ollama': '#ffc107',
+            'RVC': '#dc3545'
+        }
+        return colors.get(process_type, '#6c757d')
+    
+    def get_process_instance_status(self, process_type, instance_id):
+        """Get status of specific process instance"""
+        if not hasattr(self.launcher_gui, 'process_instance_tabs'):
+            return {'error': 'Process tracking not available'}
+        
+        if process_type not in self.launcher_gui.process_instance_tabs:
+            return {'error': f'Process type {process_type} not found'}
+        
+        instances = self.launcher_gui.process_instance_tabs[process_type]
+        if instance_id >= len(instances):
+            return {'error': f'Instance {instance_id} not found'}
+        
+        instance_data = instances[instance_id]
+        tab = instance_data.get('tab')
+        terminal = instance_data.get('terminal')
+        proc = instance_data.get('proc')
+        
+        status = {
+            'instance_id': instance_id,
+            'process_type': process_type,
+            'name': f"{process_type} Instance {instance_id+1}",
+            'status': 'Running' if proc and proc.poll() is None else 'Stopped',
+            'pid': proc.pid if proc else None,
+            'uptime': self.get_process_uptime(terminal),
+            'cpu_usage': self.get_process_cpu(proc),
+            'memory_usage': self.get_process_memory(proc),
+            'terminal_active': terminal is not None
+        }
+        
+        return status
+    
+    def start_process_instance(self, process_type, instance_id):
+        """Start a process instance"""
+        try:
+            # Get batch file path
+            batch_path = None
+            if process_type == "Oobabooga":
+                batch_path = self.launcher_gui.ooba_bat
+            elif process_type == "Z-Waifu":
+                batch_path = self.launcher_gui.zwaifu_bat
+            elif process_type == "Ollama":
+                batch_path = self.launcher_gui.ollama_bat
+            elif process_type == "RVC":
+                batch_path = self.launcher_gui.rvc_bat
+            
+            if not batch_path or not os.path.exists(batch_path):
+                return {'error': f'Batch file not found for {process_type}'}
+            
+            # Create new process
+            proc = subprocess.Popen([batch_path], cwd=os.path.dirname(batch_path), shell=False,
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            
+            # Update instance data
+            if process_type in self.launcher_gui.process_instance_tabs:
+                instances = self.launcher_gui.process_instance_tabs[process_type]
+                if instance_id < len(instances):
+                    instances[instance_id]['proc'] = proc
+                    terminal = instances[instance_id]['terminal']
+                    if terminal:
+                        terminal.attach_process(proc, batch_path)
+                        terminal.start_time = time.time()
+            
+            # Add notification
+            self.add_notification(
+                f"{process_type} Started",
+                f"Instance {instance_id+1} has been started successfully",
+                'success'
+            )
+            
+            return {'success': True, 'message': f'Started {process_type} Instance {instance_id+1}'}
+            
+        except Exception as e:
+            self.add_notification(
+                f"{process_type} Error",
+                f"Failed to start instance {instance_id+1}: {str(e)}",
+                'error'
+            )
+            return {'error': str(e)}
+    
+    def stop_process_instance(self, process_type, instance_id):
+        """Stop a process instance"""
+        try:
+            if process_type in self.launcher_gui.process_instance_tabs:
+                instances = self.launcher_gui.process_instance_tabs[process_type]
+                if instance_id < len(instances):
+                    instance_data = instances[instance_id]
+                    proc = instance_data.get('proc')
+                    
+                    if proc and proc.poll() is None:
+                        proc.terminate()
+                        
+                        # Add notification
+                        self.add_notification(
+                            f"{process_type} Stopped",
+                            f"Instance {instance_id+1} has been stopped",
+                            'warning'
+                        )
+                        
+                        return {'success': True, 'message': f'Stopped {process_type} Instance {instance_id+1}'}
+                    else:
+                        return {'error': f'Process {process_type} Instance {instance_id+1} is not running'}
+            
+            return {'error': f'Instance {instance_id} not found'}
+            
+        except Exception as e:
+            self.add_notification(
+                f"{process_type} Error",
+                f"Failed to stop instance {instance_id+1}: {str(e)}",
+                'error'
+            )
+            return {'error': str(e)}
+    
+    def start_all_processes(self):
+        """Start all processes"""
+        try:
+            # Implementation would iterate through all processes
+            self.add_notification(
+                "All Processes Started",
+                "All processes have been started successfully",
+                'success'
+            )
+            return {'success': True, 'message': 'Started all processes'}
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def stop_all_processes(self):
+        """Stop all processes"""
+        try:
+            # Implementation would iterate through all processes
+            self.add_notification(
+                "All Processes Stopped",
+                "All processes have been stopped",
+                'warning'
+            )
+            return {'success': True, 'message': 'Stopped all processes'}
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def restart_all_processes(self):
+        """Restart all processes"""
+        try:
+            # Implementation would iterate through all processes
+            self.add_notification(
+                "All Processes Restarted",
+                "All processes have been restarted",
+                'info'
+            )
+            return {'success': True, 'message': 'Restarted all processes'}
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def get_terminal_output(self, process_type, instance_id):
+        """Get terminal output for a process"""
+        try:
+            if process_type in self.launcher_gui.process_instance_tabs:
+                instances = self.launcher_gui.process_instance_tabs[process_type]
+                if instance_id < len(instances):
+                    terminal = instances[instance_id].get('terminal')
+                    if terminal and hasattr(terminal, 'output'):
+                        return terminal.output.get('1.0', 'end-1c')
+            
+            return "Terminal output not available"
+            
+        except Exception as e:
+            return f"Error getting terminal output: {e}"
+    
+    def send_terminal_command(self, process_type, instance_id, command):
+        """Send command to terminal"""
+        try:
+            if process_type in self.launcher_gui.process_instance_tabs:
+                instances = self.launcher_gui.process_instance_tabs[process_type]
+                if instance_id < len(instances):
+                    terminal = instances[instance_id].get('terminal')
+                    proc = instances[instance_id].get('proc')
+                    
+                    if terminal and proc and proc.poll() is None:
+                        # Send command to process
+                        proc.stdin.write(command + '\n')
+                        proc.stdin.flush()
+                        return {'success': True, 'message': f'Sent command: {command}'}
+            
+            return {'error': 'Process not available or not running'}
+            
+        except Exception as e:
+            return {'error': str(e)}
+    
+    def get_process_uptime(self, terminal):
+        """Get process uptime"""
+        try:
+            if terminal and hasattr(terminal, 'start_time'):
+                elapsed = int(time.time() - terminal.start_time)
+                h, m, s = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
+                return f"{h:02}:{m:02}:{s:02}"
+            return "Unknown"
+        except:
+            return "Unknown"
+    
+    def get_process_cpu(self, proc):
+        """Get process CPU usage"""
+        try:
+            if proc and proc.poll() is None:
+                p = psutil.Process(proc.pid)
+                return f"{p.cpu_percent(interval=0.1):.1f}%"
+            return "N/A"
+        except:
+            return "N/A"
+    
+    def get_process_memory(self, proc):
+        """Get process memory usage"""
+        try:
+            if proc and proc.poll() is None:
+                p = psutil.Process(proc.pid)
+                mem_mb = p.memory_info().rss / (1024 * 1024)
+                return f"{mem_mb:.1f} MB"
+            return "N/A"
+        except:
+            return "N/A"
+    
+    def get_system_uptime(self):
+        """Get system uptime"""
+        try:
+            uptime = time.time() - psutil.boot_time()
+            h, m, s = int(uptime) // 3600, (int(uptime) % 3600) // 60, int(uptime) % 60
+            return f"{h:02}:{m:02}:{s:02}"
+        except:
+            return "Unknown"
+    
+    def monitor_for_mobile(self):
+        """Monitor system for mobile notifications"""
+        while self.monitoring_active:
+            try:
+                # Check for high resource usage
+                cpu_percent = psutil.cpu_percent(interval=1)
+                memory_percent = psutil.virtual_memory().percent
+                
+                if cpu_percent > 80:
+                    self.add_notification(
+                        "High CPU Usage",
+                        f"System CPU usage is {cpu_percent:.1f}%",
+                        'warning'
+                    )
+                
+                if memory_percent > 80:
+                    self.add_notification(
+                        "High Memory Usage",
+                        f"System memory usage is {memory_percent:.1f}%",
+                        'warning'
+                    )
+                
+                # Check for process status changes
+                if hasattr(self.launcher_gui, 'process_instance_tabs'):
+                    for process_type, instances in self.launcher_gui.process_instance_tabs.items():
+                        for i, instance_data in enumerate(instances):
+                            proc = instance_data.get('proc')
+                            if proc and proc.poll() is not None:
+                                # Process has stopped
+                                self.add_notification(
+                                    f"{process_type} Stopped",
+                                    f"Instance {i+1} has stopped unexpectedly",
+                                    'error'
+                                )
+                
+                time.sleep(30)  # Check every 30 seconds
+                
+            except Exception as e:
+                print(f"Error in mobile monitoring: {e}")
+                time.sleep(60)
+    
+    def start(self):
+        """Start the mobile app"""
+        print(f"Starting Z-Waifu Launcher Mobile App on http://{self.host}:{self.port}")
+        print("Access from any device on your network!")
+        
+        # Start Flask app
+        self.socketio.run(self.app, host=self.host, port=self.port, debug=False)
+    
+    def stop(self):
+        """Stop the mobile app"""
+        self.monitoring_active = False
+        print("Mobile app stopped")
+
+def create_mobile_app(launcher_gui, host='0.0.0.0', port=8081):
+    """Create and start mobile app"""
+    try:
+        mobile_app = MobileApp(launcher_gui, host, port)
+        return mobile_app
+    except Exception as e:
+        print(f"Error creating mobile app: {e}")
+        return None
+
+if __name__ == "__main__":
+    # Test mobile app
+    print("Z-Waifu Launcher Mobile App")
+    print("This module provides mobile interface for remote monitoring.")
+    print("To use, import and call create_mobile_app() with your launcher instance.") 
