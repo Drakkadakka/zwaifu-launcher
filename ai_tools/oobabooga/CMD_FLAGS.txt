@@ -1,0 +1,9 @@
+# Oobabooga CMD Flags
+# Add your command line flags here
+# Example:
+# --listen
+# --port 7860
+# --api
+# --extensions api
+# --model-dir models
+# --lora-dir loras
