@@ -1,0 +1,18 @@
+1.0.0
+2025-01-15
+Initial Release with VRAM Monitoring
+
+This version includes:
+- Complete file organization with new directory structure
+- Updated import paths for all modules
+- Reorganized documentation and configuration files
+- Improved distribution packaging
+- Enhanced project maintainability
+- VRAM monitoring system with automatic cleanup
+- Security tools and audit capabilities
+- API examples and admin tools
+- Static analysis and regression monitoring
+
+For installation instructions, see docs/INSTALLATION_GUIDE.md
+For changelog, see docs/CHANGELOG.md
+For project structure, see docs/PROJECT_STRUCTURE.md

@@ -1,0 +1,63 @@
+# Core Dependencies
+psutil>=5.9.0
+pillow>=10.0.0
+pystray>=0.19.0
+python-dotenv>=1.0.0
+torch>=2.0.0
+
+# Advanced Features Dependencies
+flask>=3.0.0
+flask-socketio>=5.3.0
+flask-cors>=4.0.0
+flask-limiter>=3.5.0
+pyjwt>=2.8.0
+matplotlib>=3.7.0
+numpy>=1.24.0
+requests>=2.31.0
+qrcode[pil]>=7.4.0
+
+# Additional Dependencies for Full Functionality
+python-engineio>=4.7.0
+python-socketio>=5.9.0
+eventlet>=0.33.3
+gevent>=23.7.0
+gevent-websocket>=0.10.1
+
+# Additional Dependencies for Full Functionality
+blinker>=1.7.0
+itsdangerous>=2.1.0
+jinja2>=3.1.0
+markupsafe>=2.1.0
+werkzeug>=3.0.0
+click>=8.1.0
+six>=1.16.0
+python-dateutil>=2.8.0
+cycler>=0.11.0
+kiwisolver>=1.4.0
+pyparsing>=3.0.0
+packaging>=23.0
+fonttools>=4.40.0
+contourpy>=1.1.0
+certifi>=2023.0.0
+charset-normalizer>=3.0.0
+idna>=3.4
+urllib3>=2.0.0
+
+# Security and Performance Dependencies
+cryptography>=41.0.0
+bcrypt>=4.0.0
+
+# Optional Dependencies for Enhanced Features
+# These are automatically installed if available
+# and the launcher will work without them
+
+# VRAM Monitoring Dependencies (Optional)
+GPUtil>=1.4.0
+tensorflow>=2.13.0; platform_system!="Windows"  # TensorFlow for VRAM monitoring
+tensorflow-cpu>=2.13.0; platform_system=="Windows"  # CPU version for Windows compatibility
+
+# For development and testing:
+# pytest>=7.0.0
+# pytest-cov>=4.0.0
+# black>=23.0.0
+# flake8>=6.0.0 
