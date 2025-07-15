@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Z-Waifu Launcher - Mobile</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #6f42c1;
+            --secondary-color: #8e44ad;
+            --success-color: #28a745;
+            --warning-color: #ffc107;
+            --danger-color: #dc3545;
+            --dark-bg: #1a1a1a;
+            --card-bg: #2d2d2d;
+            --text-color: #ffffff;
+        }
+
+        * {
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background-color: var(--dark-bg);
+            color: var(--text-color);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 0;
+            overflow-x: hidden;
+        }
+
+        .mobile-header {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            padding: 1rem;
+            text-align: center;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+
+        .mobile-header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: bold;
+        }
+
+        .mobile-header .status {
+            font-size: 0.9rem;
+            opacity: 0.9;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+            padding: 1rem;
+        }
+
+        .stat-card {
+            background: var(--card-bg);
+            border-radius: 15px;
+            padding: 1.5rem;
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            color: var(--primary-color);
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+
+        .process-list {
+            padding: 1rem;
+        }
+
+        .process-card {
+            background: var(--card-bg);
+            border-radius: 15px;
+            margin-bottom: 1rem;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .process-header {
+            padding: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .process-info {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .process-icon {
+            font-size: 2rem;
+            width: 50px;
+            text-align: center;
+        }
+
+        .process-details h3 {
+            margin: 0;
+            font-size: 1.1rem;
+            font-weight: bold;
+        }
+
+        .process-status {
+            font-size: 0.9rem;
+            padding: 0.3rem 0.8rem;
+            border-radius: 20px;
+            font-weight: bold;
+        }
+
+        .status-running {
+            background: var(--success-color);
+            color: white;
+        }
+
+        .status-stopped {
+            background: var(--danger-color);
+            color: white;
+        }
+
+        .process-body {
+            padding: 1rem;
+        }
+
+        .process-metrics {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .metric {
+            text-align: center;
+            padding: 0.5rem;
+            background: rgba(255,255,255,0.05);
+            border-radius: 10px;
+        }
+
+        .metric-value {
+            font-size: 1.2rem;
+            font-weight: bold;
+            color: var(--primary-color);
+        }
+
+        .metric-label {
+            font-size: 0.8rem;
+            opacity: 0.7;
+        }
+
+        .process-actions {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.5rem;
+        }
+
+        .btn-mobile {
+            padding: 0.8rem;
+            border: none;
+            border-radius: 10px;
+            font-weight: bold;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            min-height: 44px; /* Touch-friendly */
+        }
+
+        .btn-mobile:active {
+            transform: scale(0.95);
+        }
+
+        .btn-start {
+            background: var(--success-color);
+            color: white;
+        }
+
+        .btn-stop {
+            background: var(--danger-color);
+            color: white;
+        }
+
+        .btn-restart {
+            background: var(--warning-color);
+            color: black;
+        }
+
+        .quick-actions {
+            padding: 1rem;
+            position: sticky;
+            bottom: 0;
+            background: var(--dark-bg);
+            border-top: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .quick-actions-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+        }
+
+        .btn-quick {
+            padding: 1rem;
+            border: none;
+            border-radius: 15px;
+            font-weight: bold;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            min-height: 60px;
+        }
+
+        .btn-quick:active {
+            transform: scale(0.95);
+        }
+
+        .notifications-panel {
+            position: fixed;
+            top: 0;
+            right: -300px;
+            width: 300px;
+            height: 100vh;
+            background: var(--card-bg);
+            transition: right 0.3s ease;
+            z-index: 2000;
+            overflow-y: auto;
+        }
+
+        .notifications-panel.open {
+            right: 0;
+        }
+
+        .notification-item {
+            padding: 1rem;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .notification-title {
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+        }
+
+        .notification-message {
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+
+        .notification-time {
+            font-size: 0.8rem;
+            opacity: 0.6;
+            margin-top: 0.5rem;
+        }
+
+        .notification-badge {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background: var(--danger-color);
+            color: white;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            opacity: 0.7;
+        }
+
+        .pull-to-refresh {
+            text-align: center;
+            padding: 1rem;
+            color: var(--primary-color);
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 480px) {
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .process-metrics {
+                grid-template-columns: 1fr;
+            }
+            
+            .process-actions {
+                grid-template-columns: 1fr;
+            }
+            
+            .quick-actions-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Dark mode optimizations */
+        .dark-mode {
+            background-color: var(--dark-bg);
+            color: var(--text-color);
+        }
+
+        /* Touch optimizations */
+        .touch-target {
+            min-height: 44px;
+            min-width: 44px;
+        }
+
+        /* Animations */
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+
+        /* Swipe gestures */
+        .swipeable {
+            touch-action: pan-y;
+        }
+    </style>
+</head>
+<body class="dark-mode">
+    <!-- Mobile Header -->
+    <div class="mobile-header">
+        <h1><i class="fas fa-rocket"></i> Z-Waifu Launcher</h1>
+        <div class="status">
+            <i class="fas fa-circle text-success"></i> Mobile Interface Active
+        </div>
+    </div>
+
+    <!-- Pull to Refresh Indicator -->
+    <div class="pull-to-refresh" id="pull-refresh" style="display: none;">
+        <i class="fas fa-sync-alt fa-spin"></i> Refreshing...
+    </div>
+
+    <!-- System Stats -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-number" id="total-processes">0</div>
+            <div class="stat-label">Total Processes</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number" id="running-processes">0</div>
+            <div class="stat-label">Running</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number" id="cpu-usage">0%</div>
+            <div class="stat-label">CPU Usage</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-number" id="memory-usage">0%</div>
+            <div class="stat-label">Memory Usage</div>
+        </div>
+    </div>
+
+    <!-- Process List -->
+    <div class="process-list" id="process-list">
+        <div class="loading">
+            <i class="fas fa-spinner fa-spin"></i> Loading processes...
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="quick-actions">
+        <div class="quick-actions-grid">
+            <button class="btn-quick btn-start" onclick="quickAction('start_all')">
+                <i class="fas fa-play"></i><br>Start All
+            </button>
+            <button class="btn-quick btn-stop" onclick="quickAction('stop_all')">
+                <i class="fas fa-stop"></i><br>Stop All
+            </button>
+            <button class="btn-quick btn-restart" onclick="quickAction('restart_all')">
+                <i class="fas fa-redo"></i><br>Restart All
+            </button>
+        </div>
+    </div>
+
+    <!-- Notifications Panel -->
+    <div class="notifications-panel" id="notifications-panel">
+        <div class="mobile-header">
+            <h3><i class="fas fa-bell"></i> Notifications</h3>
+            <button class="btn btn-sm btn-outline-light" onclick="clearNotifications()">
+                <i class="fas fa-trash"></i> Clear
+            </button>
+        </div>
+        <div id="notifications-list">
+            <!-- Notifications will be loaded here -->
+        </div>
+    </div>
+
+    <!-- Notifications Badge -->
+    <div class="notification-badge" id="notification-badge" style="display: none;">0</div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script>
+        // Global variables
+        let socket;
+        let lastRefresh = 0;
+        let notificationCount = 0;
+        let processes = [];
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeMobileApp();
+            setupTouchGestures();
+            setupPullToRefresh();
+        });
+
+        // Initialize mobile app
+        function initializeMobileApp() {
+            initializeWebSocket();
+            refreshStatus();
+            
+            // Auto-refresh every 10 seconds
+            setInterval(refreshStatus, 10000);
+            
+            // Update system stats every 5 seconds
+            setInterval(updateSystemStats, 5000);
+        }
+
+        // WebSocket initialization
+        function initializeWebSocket() {
+            socket = io();
+            
+            socket.on('connect', function() {
+                console.log('Connected to mobile server');
+                showNotification('Connected', 'Mobile interface connected successfully', 'success');
+            });
+            
+            socket.on('disconnect', function() {
+                console.log('Disconnected from mobile server');
+                showNotification('Disconnected', 'Connection lost', 'error');
+            });
+            
+            socket.on('mobile_status_update', function(data) {
+                updateProcessList(data);
+            });
+            
+            socket.on('mobile_notification', function(notification) {
+                addNotification(notification);
+            });
+        }
+
+        // Refresh status
+        function refreshStatus() {
+            fetch('/mobile/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    updateProcessList(data.processes);
+                    updateSystemStats(data.system_info);
+                    updateNotifications(data.notifications);
+                })
+                .catch(error => {
+                    console.error('Error fetching status:', error);
+                    showNotification('Error', 'Failed to fetch status', 'error');
+                });
+        }
+
+        // Update process list
+        function updateProcessList(processList) {
+            processes = processList;
+            const processListElement = document.getElementById('process-list');
+            
+            if (processList.length === 0) {
+                processListElement.innerHTML = `
+                    <div class="loading">
+                        <i class="fas fa-info-circle"></i> No processes found
+                    </div>
+                `;
+                return;
+            }
+            
+            processListElement.innerHTML = '';
+            
+            processList.forEach(process => {
+                const processCard = createProcessCard(process);
+                processListElement.appendChild(processCard);
+            });
+            
+            // Update stats
+            updateProcessStats();
+        }
+
+        // Create process card
+        function createProcessCard(process) {
+            const card = document.createElement('div');
+            card.className = 'process-card swipeable';
+            
+            const statusClass = process.status === 'Running' ? 'status-running' : 'status-stopped';
+            
+            card.innerHTML = `
+                <div class="process-header">
+                    <div class="process-info">
+                        <div class="process-icon">${process.icon}</div>
+                        <div class="process-details">
+                            <h3>${process.name}</h3>
+                            <div class="process-status ${statusClass}">${process.status}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="process-body">
+                    <div class="process-metrics">
+                        <div class="metric">
+                            <div class="metric-value">${process.cpu_usage}</div>
+                            <div class="metric-label">CPU</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">${process.memory_usage}</div>
+                            <div class="metric-label">Memory</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">${process.uptime}</div>
+                            <div class="metric-label">Uptime</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">${process.pid || 'N/A'}</div>
+                            <div class="metric-label">PID</div>
+                        </div>
+                    </div>
+                    <div class="process-actions">
+                        <button class="btn-mobile btn-start" onclick="controlProcess('${process.type}', ${process.instance_id}, 'start')">
+                            <i class="fas fa-play"></i>
+                        </button>
+                        <button class="btn-mobile btn-restart" onclick="controlProcess('${process.type}', ${process.instance_id}, 'restart')">
+                            <i class="fas fa-redo"></i>
+                        </button>
+                        <button class="btn-mobile btn-stop" onclick="controlProcess('${process.type}', ${process.instance_id}, 'stop')">
+                            <i class="fas fa-stop"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            return card;
+        }
+
+        // Control process
+        function controlProcess(processType, instanceId, action) {
+            const url = `/mobile/api/process/${processType}/${instanceId}`;
+            const method = action === 'start' ? 'POST' : action === 'stop' ? 'DELETE' : 'PUT';
+            
+            fetch(url, { method: method })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showNotification('Success', data.message, 'success');
+                        refreshStatus();
+                    } else {
+                        showNotification('Error', data.error, 'error');
+                    }
+                })
+                .catch(error => {
+                    showNotification('Error', 'Failed to control process', 'error');
+                });
+        }
+
+        // Quick actions
+        function quickAction(action) {
+            fetch('/mobile/api/quick-actions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: action })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showNotification('Success', data.message, 'success');
+                    refreshStatus();
+                } else {
+                    showNotification('Error', data.error, 'error');
+                }
+            })
+            .catch(error => {
+                showNotification('Error', 'Failed to perform action', 'error');
+            });
+        }
+
+        // Update system stats
+        function updateSystemStats(systemInfo) {
+            document.getElementById('cpu-usage').textContent = systemInfo.cpu_percent + '%';
+            document.getElementById('memory-usage').textContent = systemInfo.memory_percent + '%';
+        }
+
+        // Update process stats
+        function updateProcessStats() {
+            const total = processes.length;
+            const running = processes.filter(p => p.status === 'Running').length;
+            
+            document.getElementById('total-processes').textContent = total;
+            document.getElementById('running-processes').textContent = running;
+        }
+
+        // Notifications
+        function addNotification(notification) {
+            notificationCount++;
+            updateNotificationBadge();
+            
+            const notificationsList = document.getElementById('notifications-list');
+            const notificationElement = document.createElement('div');
+            notificationElement.className = 'notification-item';
+            
+            const time = new Date(notification.timestamp).toLocaleTimeString();
+            
+            notificationElement.innerHTML = `
+                <div class="notification-title">${notification.title}</div>
+                <div class="notification-message">${notification.message}</div>
+                <div class="notification-time">${time}</div>
+            `;
+            
+            notificationsList.insertBefore(notificationElement, notificationsList.firstChild);
+        }
+
+        function updateNotificationBadge() {
+            const badge = document.getElementById('notification-badge');
+            if (notificationCount > 0) {
+                badge.style.display = 'flex';
+                badge.textContent = notificationCount;
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+
+        function clearNotifications() {
+            fetch('/mobile/api/notifications/clear', { method: 'POST' })
+                .then(() => {
+                    document.getElementById('notifications-list').innerHTML = '';
+                    notificationCount = 0;
+                    updateNotificationBadge();
+                });
+        }
+
+        function showNotification(title, message, type) {
+            // Create temporary notification
+            const notification = {
+                title: title,
+                message: message,
+                timestamp: new Date().toISOString()
+            };
+            addNotification(notification);
+        }
+
+        // Touch gestures
+        function setupTouchGestures() {
+            let startX, startY;
+            
+            document.addEventListener('touchstart', function(e) {
+                startX = e.touches[0].clientX;
+                startY = e.touches[0].clientY;
+            });
+            
+            document.addEventListener('touchend', function(e) {
+                if (!startX || !startY) return;
+                
+                const endX = e.changedTouches[0].clientX;
+                const endY = e.changedTouches[0].clientY;
+                
+                const diffX = startX - endX;
+                const diffY = startY - endY;
+                
+                // Swipe right to open notifications
+                if (diffX < -50 && Math.abs(diffY) < 50) {
+                    document.getElementById('notifications-panel').classList.add('open');
+                }
+                
+                // Swipe left to close notifications
+                if (diffX > 50 && Math.abs(diffY) < 50) {
+                    document.getElementById('notifications-panel').classList.remove('open');
+                }
+                
+                startX = startY = null;
+            });
+        }
+
+        // Pull to refresh
+        function setupPullToRefresh() {
+            let startY = 0;
+            let currentY = 0;
+            let pullDistance = 0;
+            const threshold = 100;
+            
+            document.addEventListener('touchstart', function(e) {
+                if (window.scrollY === 0) {
+                    startY = e.touches[0].clientY;
+                }
+            });
+            
+            document.addEventListener('touchmove', function(e) {
+                if (startY && window.scrollY === 0) {
+                    currentY = e.touches[0].clientY;
+                    pullDistance = currentY - startY;
+                    
+                    if (pullDistance > 0) {
+                        e.preventDefault();
+                        const refreshElement = document.getElementById('pull-refresh');
+                        refreshElement.style.display = 'block';
+                        
+                        if (pullDistance > threshold) {
+                            refreshElement.innerHTML = '<i class="fas fa-sync-alt"></i> Release to refresh';
+                        } else {
+                            refreshElement.innerHTML = '<i class="fas fa-arrow-down"></i> Pull to refresh';
+                        }
+                    }
+                }
+            });
+            
+            document.addEventListener('touchend', function(e) {
+                if (pullDistance > threshold) {
+                    refreshStatus();
+                    showNotification('Refreshing', 'Updating status...', 'info');
+                }
+                
+                document.getElementById('pull-refresh').style.display = 'none';
+                startY = currentY = pullDistance = 0;
+            });
+        }
+
+        // Keyboard shortcuts for testing
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'r' || e.key === 'R') {
+                refreshStatus();
+            }
+        });
+    </script>
+</body>
+</html> 
