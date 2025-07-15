@@ -4,6 +4,53 @@ A powerful, feature-rich GUI launcher for managing AI/ML processes including Oob
 
 ## 🚀 Quick Start
 
+### Prerequisites
+
+Before using the Z-Waifu Launcher, you need to have the following AI tools installed in your project directory:
+
+#### **Required AI Tools Setup**
+
+**1. Oobabooga (Text Generation WebUI)**
+- Download from: https://github.com/oobabooga/text-generation-webui
+- Extract to: `text-generation-webui-main/` in your project root
+- The launcher will auto-detect `start_windows.bat`
+
+**2. Z-Waifu (AI Companion)**
+- Download from: https://github.com/zwai-project/z-waif
+- Extract to: `z-waif-1.14-R4/` in your project root
+- The launcher will auto-detect `startup.bat`
+
+**3. Ollama (Local LLM Framework) - Optional**
+- Download from: https://ollama.ai/
+- Create `ollama.bat` in your project root:
+```batch
+@echo off
+ollama serve
+```
+
+**4. RVC (Voice Cloning) - Optional**
+- Download from: https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI
+- Create `rvc.bat` in your project root:
+```batch
+@echo off
+cd path\to\your\rvc\installation
+python infer-web.py
+```
+
+#### **Project Structure**
+Your project should look like this:
+```
+ZWAIFU-PROJECT/
+├── zwaifu_launcher_gui.py
+├── text-generation-webui-main/     # Oobabooga
+│   └── start_windows.bat
+├── z-waif-1.14-R4/                # Z-Waifu
+│   └── startup.bat
+├── ollama.bat                     # Ollama (optional)
+├── rvc.bat                        # RVC (optional)
+└── ... (other launcher files)
+```
+
 ### One-Click Launch (Recommended)
 Simply run the smart launcher which handles everything automatically:
 
@@ -13,7 +60,7 @@ launch_launcher.bat
 ```
 
 **Cross-platform:**
-   ```bash
+```bash
 python launch_launcher.py
 ```
 
@@ -22,6 +69,7 @@ The launcher will automatically:
 - ✅ Validate project structure
 - ✅ Create virtual environment if needed
 - ✅ Install dependencies automatically
+- ✅ Auto-detect AI tool batch files
 - ✅ Launch the GUI on top of other windows
 - ✅ Handle all setup and configuration
 
@@ -206,7 +254,13 @@ ZWAIFU-PROJECT/
     ├── zwaifu/              # Z-Waifu setup
     ├── ollama/              # Ollama setup
     └── rvc/                 # RVC setup
-```
+
+### **Expected Batch Files**
+The launcher expects these specific batch file names:
+- `start_windows.bat` - Oobabooga text generation web UI
+- `startup.bat` - Z-Waifu AI companion system
+- `ollama.bat` - Ollama local LLM server
+- `rvc.bat` - RVC voice conversion web UI
 
 ## 📋 System Requirements
 
@@ -253,6 +307,15 @@ Edit `config/launcher_config.json` to customize:
 - **VRAM monitoring settings** - Thresholds, cleanup options
 - **Analytics preferences** - Data collection, retention settings
 
+### **Batch File Auto-Detection**
+The launcher automatically searches for these batch files:
+- **Oobabooga**: `start_windows.bat` (in `text-generation-webui-main/`)
+- **Z-Waifu**: `startup.bat` (in `z-waif-1.14-R4/`)
+- **Ollama**: `ollama.bat` (in project root)
+- **RVC**: `rvc.bat` (in project root)
+
+If batch files aren't found automatically, use the Settings tab to manually browse and select them.
+
 ## 🛠️ Troubleshooting
 
 ### **Common Issues**
@@ -266,8 +329,12 @@ Edit `config/launcher_config.json` to customize:
 - Or use the smart launcher: `python launch_launcher.py`
 
 **"Batch files not found"**
-- Use the Settings tab to browse and select batch files
-- Or place batch files in the project directory for auto-detection
+- **Oobabooga**: Ensure `text-generation-webui-main/start_windows.bat` exists
+- **Z-Waifu**: Ensure `z-waif-1.14-R4/startup.bat` exists
+- **Ollama**: Create `ollama.bat` in project root with `ollama serve`
+- **RVC**: Create `rvc.bat` in project root pointing to your RVC installation
+- Use the Settings tab to manually browse and select batch files
+- Check the project structure matches the requirements above
 
 **"Port already in use"**
 - Change ports in Settings tab
