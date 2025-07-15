@@ -1,0 +1,10 @@
+{
+  "timestamp": "20250714_014648",
+  "backup_path": "D:\\ZWAIFU-PROJECT\\backups\\backup_20250714_014648",
+  "files": [
+    "zwaifu_launcher_gui.py",
+    "config/launcher_config.json",
+    "data/launcher_log.txt"
+  ],
+  "deployment_version": "1.0.0"
+}

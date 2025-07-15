@@ -1,0 +1,3704 @@
+import os
+import sys
+import subprocess
+import threading
+import time
+import socket
+import tkinter as tk
+from tkinter import ttk, scrolledtext, messagebox, filedialog, simpledialog
+import json
+import pystray
+from PIL import Image, ImageTk
+from datetime import datetime
+import webbrowser
+import glob
+import psutil
+import re
+import sqlite3
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import numpy as np
+import math
+import importlib.util
+
+# Advanced Features Imports
+try:
+    from flask import Flask, render_template, request, jsonify, send_from_directory
+    from flask_socketio import SocketIO, emit
+    from flask_cors import CORS
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+    import jwt
+    import secrets
+    FLASK_AVAILABLE = True
+except ImportError:
+    FLASK_AVAILABLE = False
+
+# Import utility modules
+try:
+    from utils import (
+        WebInterface, create_web_interface,
+        APIServer, create_api_server,
+        MobileApp, create_mobile_app,
+        AnalyticsSystem, create_analytics_system,
+        PluginManager, create_plugin_manager
+    )
+    UTILS_AVAILABLE = True
+except ImportError:
+    UTILS_AVAILABLE = False
+    # Fallback to local classes if utils not available
+    WebInterface = None
+    APIServer = None
+    MobileApp = None
+    AnalyticsSystem = None
+    PluginManager = None
+
+try:
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    import numpy as np
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+
+try:
+    import qrcode
+    QRCODE_AVAILABLE = True
+except ImportError:
+    QRCODE_AVAILABLE = False
+
+# Remove venv creation, install_requirements, and activate_virtual_env functions and their calls.
+# The script should now start directly with the GUI logic and not attempt to manage virtual environments.
+
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(PROJECT_ROOT, "config", "launcher_config.json")
+ICON_FILE = os.path.join(PROJECT_ROOT, "static", "images", "launcher_icon.png")
+CMD_FLAGS_FILE = os.path.join(PROJECT_ROOT, "ai_tools", "oobabooga", "CMD_FLAGS.txt")
+LOG_FILE = os.path.join(PROJECT_ROOT, "data", "launcher_log.txt")
+
+# Advanced Features Configuration
+WEB_PORT = 8080
+API_PORT = 8081
+MOBILE_PORT = 8082
+ANALYTICS_DB = os.path.join(PROJECT_ROOT, "data", "analytics.db")
+PLUGINS_DIR = os.path.join(PROJECT_ROOT, "plugins")
+TEMPLATES_DIR = os.path.join(PROJECT_ROOT, "templates")
+STATIC_DIR = os.path.join(PROJECT_ROOT, "static")
+
+# Create necessary directories
+os.makedirs(PLUGINS_DIR, exist_ok=True)
+os.makedirs(TEMPLATES_DIR, exist_ok=True)
+os.makedirs(STATIC_DIR, exist_ok=True)
+
+# Auto-detect batch files
+def find_batch_file(filename):
+    """
+    Find a batch file in the project, excluding installer and venv directories.
+    """
+    for root, dirs, files in os.walk(PROJECT_ROOT):
+        # Skip installer directories and venv directories
+        dirs[:] = [d for d in dirs if d not in ['installer_files', 'venv', '__pycache__', '.git']]
+        
+        if filename in files:
+            file_path = os.path.join(root, filename)
+            # Additional check to avoid installer files
+            if 'installer_files' not in file_path and 'venv' not in file_path:
+                return file_path
+    return None
+
+def beep():
+    try:
+        import winsound
+        winsound.Beep(800, 200)
+        time.sleep(0.1)
+        winsound.Beep(1200, 200)
+        time.sleep(0.1)
+        winsound.Beep(1000, 400)
+    except ImportError:
+        print("Beep not supported on this OS.")
+
+def wait_for_port(port, log, timeout=120):
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                return True
+        except (socket.timeout, ConnectionRefusedError):
+            pass
+        log(f"Waiting for Oobabooga on port {port}...")
+        time.sleep(1)
+    return False
+
+def save_config(ooba_path, zwaifu_path):
+    with open(CONFIG_FILE, "w") as f:
+        json.dump({"ooba_bat": ooba_path, "zwaifu_bat": zwaifu_path}, f)
+
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r") as f:
+            try:
+                data = json.load(f)
+                return data.get("ooba_bat"), data.get("zwaifu_bat")
+            except Exception:
+                return None, None
+    return None, None
+
+class Process:
+    def __init__(self, name, command, cwd, output_widget):
+        self.name = name
+        self.command = command
+        self.cwd = cwd
+        self.output_widget = output_widget
+        self.process = None
+        self.thread = None
+
+    def start(self):
+        self.thread = threading.Thread(target=self._run)
+        self.thread.start()
+
+    def _run(self):
+        try:
+            self.process = subprocess.Popen(self.command, cwd=self.cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            for line in self.process.stdout:
+                self.output_widget.insert(tk.END, line)
+                self.output_widget.see(tk.END)
+        except Exception as e:
+            self.output_widget.insert(tk.END, f"Error running {self.name}: {e}\n")
+            self.output_widget.see(tk.END)
+
+    def stop(self):
+        if self.process:
+            self.process.terminate()
+            self.process = None
+        if self.thread:
+            self.thread.join()
+            self.thread = None
+
+    def is_running(self):
+        return self.process is not None
+
+# Advanced Features Classes
+class WebInterface:
+    def __init__(self, launcher_gui):
+        self.launcher_gui = launcher_gui
+        self.app = None
+        self.socketio = None
+        self.server_thread = None
+        self.is_running = False
+
+    def start(self):
+        if not FLASK_AVAILABLE:
+            self.launcher_gui.log("Flask not available. Install with: pip install flask flask-socketio flask-cors")
+            return False
+
+        try:
+            self.app = Flask(__name__)
+            self.app.config['SECRET_KEY'] = secrets.token_hex(16)
+            CORS(self.app)
+            self.socketio = SocketIO(self.app, cors_allowed_origins="*")
+
+            @self.app.route('/')
+            def index():
+                return self.render_dashboard()
+
+            @self.app.route('/api/status')
+            def api_status():
+                return jsonify(self.get_status())
+
+            @self.socketio.on('connect')
+            def handle_connect():
+                emit('status_update', self.get_status())
+
+            @self.socketio.on('start_process')
+            def handle_start_process(data):
+                process_type = data.get('process_type')
+                result = self.start_process_instance(process_type)
+                emit('process_result', result)
+
+            self.server_thread = threading.Thread(target=self._run_server, daemon=True)
+            self.server_thread.start()
+            self.is_running = True
+            self.launcher_gui.log(f"Web interface started on http://localhost:{WEB_PORT}")
+            return True
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to start web interface: {e}")
+            return False
+
+    def _run_server(self):
+        try:
+            self.socketio.run(self.app, host='0.0.0.0', port=WEB_PORT, debug=False)
+        except Exception as e:
+            self.launcher_gui.log(f"Web server error: {e}")
+
+    def render_dashboard(self):
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Z-Waifu Launcher Dashboard</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }}
+                .container {{ max-width: 1200px; margin: 0 auto; }}
+                .header {{ background: #333; color: white; padding: 20px; border-radius: 5px; }}
+                .status-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin: 20px 0; }}
+                .status-card {{ background: white; padding: 20px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
+                .btn {{ background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 3px; cursor: pointer; }}
+                .btn:hover {{ background: #0056b3; }}
+                .btn.danger {{ background: #dc3545; }}
+                .btn.danger:hover {{ background: #c82333; }}
+                .status.running {{ color: #28a745; }}
+                .status.stopped {{ color: #dc3545; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>Z-Waifu Launcher Dashboard</h1>
+                    <p>Real-time process management and monitoring</p>
+                </div>
+                
+                <div class="status-grid">
+                    <div class="status-card">
+                        <h3>Oobabooga</h3>
+                        <p class="status" id="ooba-status">Checking...</p>
+                        <button class="btn" onclick="startProcess('Oobabooga')">Start</button>
+                        <button class="btn danger" onclick="stopProcess('Oobabooga')">Stop</button>
+                    </div>
+                    
+                    <div class="status-card">
+                        <h3>Z-Waifu</h3>
+                        <p class="status" id="zwaifu-status">Checking...</p>
+                        <button class="btn" onclick="startProcess('Z-Waifu')">Start</button>
+                        <button class="btn danger" onclick="stopProcess('Z-Waifu')">Stop</button>
+                    </div>
+                    
+                    <div class="status-card">
+                        <h3>Ollama</h3>
+                        <p class="status" id="ollama-status">Checking...</p>
+                        <button class="btn" onclick="startProcess('Ollama')">Start</button>
+                        <button class="btn danger" onclick="stopProcess('Ollama')">Stop</button>
+                    </div>
+                    
+                    <div class="status-card">
+                        <h3>RVC</h3>
+                        <p class="status" id="rvc-status">Checking...</p>
+                        <button class="btn" onclick="startProcess('RVC')">Start</button>
+                        <button class="btn danger" onclick="stopProcess('RVC')">Stop</button>
+                    </div>
+                </div>
+            </div>
+            
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+            <script>
+                const socket = io();
+                
+                socket.on('status_update', function(data) {{
+                    updateStatus(data);
+                }});
+                
+                socket.on('process_result', function(data) {{
+                    if (data.success) {{
+                        alert('Process started successfully!');
+                    }} else {{
+                        alert('Error: ' + data.error);
+                    }}
+                }});
+                
+                function updateStatus(data) {{
+                    Object.keys(data).forEach(process => {{
+                        const element = document.getElementById(process.toLowerCase() + '-status');
+                        if (element) {{
+                            element.textContent = data[process] ? 'Running' : 'Stopped';
+                            element.className = 'status ' + (data[process] ? 'running' : 'stopped');
+                        }}
+                    }});
+                }}
+                
+                function startProcess(processType) {{
+                    socket.emit('start_process', {{process_type: processType}});
+                }}
+                
+                function stopProcess(processType) {{
+                    socket.emit('stop_process', {{process_type: processType}});
+                }}
+                
+                // Initial status update
+                fetch('/api/status')
+                    .then(response => response.json())
+                    .then(data => updateStatus(data));
+            </script>
+        </body>
+        </html>
+        """
+
+    def get_status(self):
+        return {
+            'Oobabooga': hasattr(self.launcher_gui, 'ooba_proc') and self.launcher_gui.ooba_proc and self.launcher_gui.ooba_proc.poll() is None,
+            'Z-Waifu': hasattr(self.launcher_gui, 'zwaifu_proc') and self.launcher_gui.zwaifu_proc and self.launcher_gui.zwaifu_proc.poll() is None,
+            'Ollama': False,  # Will be updated based on actual process status
+            'RVC': False      # Will be updated based on actual process status
+        }
+
+    def start_process_instance(self, process_type):
+        try:
+            # Implementation for starting processes
+            return {'success': True, 'message': f'Started {process_type}'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+class APIServer:
+    def __init__(self, launcher_gui):
+        self.launcher_gui = launcher_gui
+        self.app = None
+        self.limiter = None
+        self.server_thread = None
+        self.is_running = False
+        self.api_keys = {}
+        self.admin_key = secrets.token_hex(32)  # Admin key for key generation
+        self.launcher_gui.log(f"Admin API key generated: {self.admin_key}")
+
+    def _validate_api_key(self, request):
+        """Validate API key from request headers"""
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return False
+        
+        api_key = auth_header.split(' ')[1]
+        if api_key not in self.api_keys:
+            return False
+        
+        # Check if key has expired (24 hour expiration)
+        key_data = self.api_keys[api_key]
+        if time.time() - key_data['created'] > 86400:  # 24 hours
+            del self.api_keys[api_key]
+            return False
+        
+        return True
+
+    def _validate_process_type(self, process_type):
+        """Validate process type to prevent injection attacks"""
+        allowed_processes = {'Oobabooga', 'Z-Waifu', 'Ollama', 'RVC'}
+        return process_type in allowed_processes
+
+    def _cleanup_expired_keys(self):
+        """Remove expired API keys"""
+        current_time = time.time()
+        expired_keys = [
+            key for key, data in self.api_keys.items()
+            if current_time - data['created'] > 86400
+        ]
+        for key in expired_keys:
+            del self.api_keys[key]
+
+    def start(self):
+        if not FLASK_AVAILABLE:
+            self.launcher_gui.log("Flask not available. Install with: pip install flask flask-limiter pyjwt")
+            return False
+
+        try:
+            self.app = Flask(__name__)
+            self.app.config['SECRET_KEY'] = secrets.token_hex(32)
+            self.limiter = Limiter(
+                app=self.app,
+                key_func=get_remote_address,
+                default_limits=["200 per day", "50 per hour"]
+            )
+
+            @self.app.route('/api/status', methods=['GET'])
+            @self.limiter.limit("10 per minute")
+            def api_status():
+                if not self._validate_api_key(request):
+                    return jsonify({'error': 'Invalid or missing API key'}), 401
+                return jsonify(self.get_status())
+
+            @self.app.route('/api/processes', methods=['GET'])
+            @self.limiter.limit("10 per minute")
+            def api_processes():
+                if not self._validate_api_key(request):
+                    return jsonify({'error': 'Invalid or missing API key'}), 401
+                return jsonify(self.get_processes())
+
+            @self.app.route('/api/start/<process_type>', methods=['POST'])
+            @self.limiter.limit("5 per minute")
+            def api_start_process(process_type):
+                if not self._validate_api_key(request):
+                    return jsonify({'error': 'Invalid or missing API key'}), 401
+                if not self._validate_process_type(process_type):
+                    return jsonify({'error': 'Invalid process type'}), 400
+                return jsonify(self.start_process_instance(process_type, 0))
+
+            @self.app.route('/api/stop/<process_type>', methods=['POST'])
+            @self.limiter.limit("5 per minute")
+            def api_stop_process(process_type):
+                if not self._validate_api_key(request):
+                    return jsonify({'error': 'Invalid or missing API key'}), 401
+                if not self._validate_process_type(process_type):
+                    return jsonify({'error': 'Invalid process type'}), 400
+                return jsonify(self.stop_process_instance(process_type, 0))
+
+            @self.app.route('/api/keys/generate', methods=['POST'])
+            def api_generate_key():
+                # Require admin key for key generation
+                auth_header = request.headers.get('Authorization')
+                if not auth_header or not auth_header.startswith('Bearer '):
+                    return jsonify({'error': 'Admin key required'}), 401
+                
+                admin_key = auth_header.split(' ')[1]
+                if admin_key != self.admin_key:
+                    return jsonify({'error': 'Invalid admin key'}), 401
+                
+                # Cleanup expired keys before generating new ones
+                self._cleanup_expired_keys()
+                
+                key = secrets.token_hex(32)
+                self.api_keys[key] = {
+                    'created': time.time(), 
+                    'permissions': ['read', 'write'],
+                    'expires': time.time() + 86400  # 24 hours
+                }
+                return jsonify({'api_key': key, 'expires_in': 86400})
+
+            self.server_thread = threading.Thread(target=self._run_server, daemon=True)
+            self.server_thread.start()
+            self.is_running = True
+            self.launcher_gui.log(f"API server started on http://localhost:{API_PORT}")
+            return True
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to start API server: {e}")
+            return False
+
+    def _run_server(self):
+        try:
+            self.app.run(host='0.0.0.0', port=API_PORT, debug=False)
+        except Exception as e:
+            self.launcher_gui.log(f"API server error: {e}")
+
+    def get_status(self):
+        return {
+            'launcher_running': True,
+            'timestamp': time.time(),
+            'version': '1.0.0'
+        }
+
+    def get_processes(self):
+        return {
+            'Oobabooga': {
+                'running': hasattr(self.launcher_gui, 'ooba_proc') and self.launcher_gui.ooba_proc and self.launcher_gui.ooba_proc.poll() is None,
+                'pid': self.launcher_gui.ooba_proc.pid if hasattr(self.launcher_gui, 'ooba_proc') and self.launcher_gui.ooba_proc else None
+            },
+            'Z-Waifu': {
+                'running': hasattr(self.launcher_gui, 'zwaifu_proc') and self.launcher_gui.zwaifu_proc and self.launcher_gui.zwaifu_proc.poll() is None,
+                'pid': self.launcher_gui.zwaifu_proc.pid if hasattr(self.launcher_gui, 'zwaifu_proc') and self.launcher_gui.zwaifu_proc else None
+            }
+        }
+
+    def start_process_instance(self, process_type, instance_id):
+        try:
+            # Get batch file path
+            batch_path = None
+            if process_type == "Oobabooga":
+                batch_path = self.launcher_gui.ooba_bat
+            elif process_type == "Z-Waifu":
+                batch_path = self.launcher_gui.zwaifu_bat
+            elif process_type == "Ollama":
+                batch_path = self.launcher_gui.ollama_bat
+            elif process_type == "RVC":
+                batch_path = self.launcher_gui.rvc_bat
+            
+            if not batch_path or not os.path.exists(batch_path):
+                return {'error': f'Batch file not found for {process_type}'}
+            
+            # Create new process
+            proc = subprocess.Popen([batch_path], cwd=os.path.dirname(batch_path), shell=True,
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            
+            # Update instance data
+            if process_type in self.launcher_gui.process_instance_tabs:
+                instances = self.launcher_gui.process_instance_tabs[process_type]
+                if instance_id < len(instances):
+                    instances[instance_id]['proc'] = proc
+                    terminal = instances[instance_id]['terminal']
+                    if terminal:
+                        terminal.attach_process(proc, batch_path)
+                        terminal.start_time = time.time()
+            
+            return {'success': True, 'message': f'Started {process_type} Instance {instance_id+1}'}
+            
+        except Exception as e:
+            return {'error': str(e)}
+
+    def stop_process_instance(self, process_type, instance_id):
+        try:
+            if process_type in self.launcher_gui.process_instance_tabs:
+                instances = self.launcher_gui.process_instance_tabs[process_type]
+                if instance_id < len(instances):
+                    proc = instances[instance_id]['proc']
+                    if proc:
+                        proc.terminate()
+                        return {'success': True, 'message': f'Stopped {process_type} Instance {instance_id+1}'}
+            
+            return {'error': f'Process not found: {process_type} Instance {instance_id+1}'}
+            
+        except Exception as e:
+            return {'error': str(e)}
+
+class MobileApp:
+    def __init__(self, launcher_gui):
+        self.launcher_gui = launcher_gui
+        self.app = None
+        self.server_thread = None
+        self.is_running = False
+        self.qr_code = None
+
+    def start(self):
+        if not FLASK_AVAILABLE:
+            self.launcher_gui.log("Flask not available. Install with: pip install flask")
+            return False
+
+        try:
+            self.app = Flask(__name__)
+            self.app.config['SECRET_KEY'] = secrets.token_hex(16)
+
+            @self.app.route('/')
+            def mobile_dashboard():
+                return self.render_mobile_dashboard()
+
+            @self.app.route('/api/mobile/status')
+            def mobile_status():
+                return jsonify(self.get_mobile_status())
+
+            @self.app.route('/api/mobile/start/<process_type>')
+            def mobile_start(process_type):
+                return jsonify(self.start_process_instance(process_type))
+
+            self.server_thread = threading.Thread(target=self._run_server, daemon=True)
+            self.server_thread.start()
+            self.is_running = True
+            
+            # Generate QR code for mobile access
+            if QRCODE_AVAILABLE:
+                self.generate_qr_code()
+            
+            self.launcher_gui.log(f"Mobile app started on http://localhost:{MOBILE_PORT}")
+            return True
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to start mobile app: {e}")
+            return False
+
+    def _run_server(self):
+        try:
+            self.app.run(host='0.0.0.0', port=MOBILE_PORT, debug=False)
+        except Exception as e:
+            self.launcher_gui.log(f"Mobile server error: {e}")
+
+    def render_mobile_dashboard(self):
+        return f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Z-Waifu Mobile Dashboard</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #f0f0f0; }}
+                .header {{ background: #333; color: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; }}
+                .process-card {{ background: white; padding: 20px; border-radius: 10px; margin-bottom: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
+                .btn {{ background: #007bff; color: white; border: none; padding: 15px 20px; border-radius: 5px; cursor: pointer; width: 100%; margin: 5px 0; }}
+                .btn:hover {{ background: #0056b3; }}
+                .btn.danger {{ background: #dc3545; }}
+                .btn.danger:hover {{ background: #c82333; }}
+                .status.running {{ color: #28a745; font-weight: bold; }}
+                .status.stopped {{ color: #dc3545; font-weight: bold; }}
+                .swipe-area {{ touch-action: pan-y; }}
+            </style>
+        </head>
+        <body>
+            <div class="swipe-area">
+                <div class="header">
+                    <h1>Z-Waifu Mobile</h1>
+                    <p>Touch-friendly process management</p>
+                </div>
+                
+                <div class="process-card">
+                    <h3>Oobabooga</h3>
+                    <p class="status" id="ooba-status">Checking...</p>
+                    <button class="btn" onclick="startProcess('Oobabooga')">Start</button>
+                    <button class="btn danger" onclick="stopProcess('Oobabooga')">Stop</button>
+                </div>
+                
+                <div class="process-card">
+                    <h3>Z-Waifu</h3>
+                    <p class="status" id="zwaifu-status">Checking...</p>
+                    <button class="btn" onclick="startProcess('Z-Waifu')">Start</button>
+                    <button class="btn danger" onclick="stopProcess('Z-Waifu')">Stop</button>
+                </div>
+                
+                <div class="process-card">
+                    <h3>Ollama</h3>
+                    <p class="status" id="ollama-status">Checking...</p>
+                    <button class="btn" onclick="startProcess('Ollama')">Start</button>
+                    <button class="btn danger" onclick="stopProcess('Ollama')">Stop</button>
+                </div>
+                
+                <div class="process-card">
+                    <h3>RVC</h3>
+                    <p class="status" id="rvc-status">Checking...</p>
+                    <button class="btn" onclick="startProcess('RVC')">Start</button>
+                    <button class="btn danger" onclick="stopProcess('RVC')">Stop</button>
+                </div>
+            </div>
+            
+            <script>
+                function updateStatus() {{
+                    fetch('/api/mobile/status')
+                        .then(response => response.json())
+                        .then(data => {{
+                            Object.keys(data).forEach(process => {{
+                                const element = document.getElementById(process.toLowerCase() + '-status');
+                                if (element) {{
+                                    element.textContent = data[process] ? 'Running' : 'Stopped';
+                                    element.className = 'status ' + (data[process] ? 'running' : 'stopped');
+                                }}
+                            }});
+                        }});
+                }}
+                
+                function startProcess(processType) {{
+                    fetch(`/api/mobile/start/${{processType}}`)
+                        .then(response => response.json())
+                        .then(data => {{
+                            if (data.success) {{
+                                alert('Process started!');
+                                updateStatus();
+                            }} else {{
+                                alert('Error: ' + data.error);
+                            }}
+                        }});
+                }}
+                
+                function stopProcess(processType) {{
+                    fetch(`/api/mobile/stop/${{processType}}`)
+                        .then(response => response.json())
+                        .then(data => {{
+                            if (data.success) {{
+                                alert('Process stopped!');
+                                updateStatus();
+                            }} else {{
+                                alert('Error: ' + data.error);
+                            }}
+                        }});
+                }}
+                
+                // Update status every 5 seconds
+                updateStatus();
+                setInterval(updateStatus, 5000);
+            </script>
+        </body>
+        </html>
+        """
+
+    def get_mobile_status(self):
+        return {
+            'Oobabooga': hasattr(self.launcher_gui, 'ooba_proc') and self.launcher_gui.ooba_proc and self.launcher_gui.ooba_proc.poll() is None,
+            'Z-Waifu': hasattr(self.launcher_gui, 'zwaifu_proc') and self.launcher_gui.zwaifu_proc and self.launcher_gui.zwaifu_proc.poll() is None,
+            'Ollama': False,
+            'RVC': False
+        }
+
+    def start_process_instance(self, process_type):
+        try:
+            # Get batch file path
+            batch_path = None
+            if process_type == "Oobabooga":
+                batch_path = self.launcher_gui.ooba_bat
+            elif process_type == "Z-Waifu":
+                batch_path = self.launcher_gui.zwaifu_bat
+            elif process_type == "Ollama":
+                batch_path = self.launcher_gui.ollama_bat
+            elif process_type == "RVC":
+                batch_path = self.launcher_gui.rvc_bat
+            
+            if not batch_path or not os.path.exists(batch_path):
+                return {'error': f'Batch file not found for {process_type}'}
+            
+            # Create new process
+            proc = subprocess.Popen([batch_path], cwd=os.path.dirname(batch_path), shell=True,
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            
+            # Update instance data
+            if process_type in self.launcher_gui.process_instance_tabs:
+                instances = self.launcher_gui.process_instance_tabs[process_type]
+                if len(instances) > 0:
+                    instances[0]['proc'] = proc
+                    terminal = instances[0]['terminal']
+                    if terminal:
+                        terminal.attach_process(proc, batch_path)
+                        terminal.start_time = time.time()
+            
+            # Add notification
+            self.add_notification(
+                f"{process_type} Started",
+                f"Instance has been started successfully",
+                'success'
+            )
+            
+            return {'success': True, 'message': f'Started {process_type} Instance'}
+            
+        except Exception as e:
+            return {'error': str(e)}
+
+    def add_notification(self, title, message, type='info'):
+        # Implementation for mobile notifications
+        pass
+
+    def generate_qr_code(self):
+        try:
+            qr = qrcode.QRCode(version=1, box_size=10, border=5)
+            qr.add_data(f'http://localhost:{MOBILE_PORT}')
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="black", back_color="white")
+            qr_path = os.path.join(PROJECT_ROOT, "mobile_qr.png")
+            img.save(qr_path)
+            self.qr_code = qr_path
+            self.launcher_gui.log(f"Mobile QR code generated: {qr_path}")
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to generate QR code: {e}")
+
+class AnalyticsSystem:
+    def __init__(self, launcher_gui):
+        self.launcher_gui = launcher_gui
+        self.db_path = ANALYTICS_DB
+        self.init_database()
+
+    def init_database(self):
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Create tables
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS process_metrics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    process_name TEXT,
+                    cpu_percent REAL,
+                    memory_percent REAL,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS system_metrics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    cpu_percent REAL,
+                    memory_percent REAL,
+                    disk_usage REAL,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS process_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    process_name TEXT,
+                    event_type TEXT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to initialize analytics database: {e}")
+
+    def record_process_metrics(self, process_name, cpu_percent, memory_percent):
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                'INSERT INTO process_metrics (process_name, cpu_percent, memory_percent) VALUES (?, ?, ?)',
+                (process_name, cpu_percent, memory_percent)
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to record process metrics: {e}")
+
+    def record_system_metrics(self, cpu_percent, memory_percent, disk_usage):
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                'INSERT INTO system_metrics (cpu_percent, memory_percent, disk_usage) VALUES (?, ?, ?)',
+                (cpu_percent, memory_percent, disk_usage)
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to record system metrics: {e}")
+
+    def record_process_event(self, process_name, event_type):
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                'INSERT INTO process_events (process_name, event_type) VALUES (?, ?)',
+                (process_name, event_type)
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to record process event: {e}")
+
+    def get_process_metrics(self, process_name, hours=24):
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            # Use parameterized query to prevent SQL injection
+            cursor.execute('''
+                SELECT cpu_percent, memory_percent, timestamp 
+                FROM process_metrics 
+                WHERE process_name = ? AND timestamp > datetime('now', '-' || ? || ' hours')
+                ORDER BY timestamp
+            ''', (process_name, str(hours)))
+            data = cursor.fetchall()
+            conn.close()
+            return data
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to get process metrics: {e}")
+            return []
+
+    def get_system_metrics(self, hours=24):
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            # Use parameterized query to prevent SQL injection
+            cursor.execute('''
+                SELECT cpu_percent, memory_percent, disk_usage, timestamp 
+                FROM system_metrics 
+                WHERE timestamp > datetime('now', '-' || ? || ' hours')
+                ORDER BY timestamp
+            ''', (str(hours),))
+            data = cursor.fetchall()
+            conn.close()
+            return data
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to get system metrics: {e}")
+            return []
+
+    def generate_report(self, hours=24):
+        try:
+            system_data = self.get_system_metrics(hours)
+            if not system_data:
+                return "No data available for the specified time period."
+            
+            avg_cpu = sum(row[0] for row in system_data) / len(system_data)
+            avg_memory = sum(row[1] for row in system_data) / len(system_data)
+            avg_disk = sum(row[2] for row in system_data) / len(system_data)
+            
+            report = f"""
+            System Performance Report (Last {hours} hours)
+            =============================================
+            Average CPU Usage: {avg_cpu:.2f}%
+            Average Memory Usage: {avg_memory:.2f}%
+            Average Disk Usage: {avg_disk:.2f}%
+            
+            Data Points: {len(system_data)}
+            """
+            
+            return report
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to generate report: {e}")
+            return "Error generating report"
+
+class PluginManager:
+    def __init__(self, launcher_gui):
+        self.launcher_gui = launcher_gui
+        self.plugins = {}
+        self.load_plugins()
+
+    def load_plugins(self):
+        try:
+            for filename in os.listdir(PLUGINS_DIR):
+                if filename.endswith('.py') and not filename.startswith('__'):
+                    plugin_path = os.path.join(PLUGINS_DIR, filename)
+                    try:
+                        spec = importlib.util.spec_from_file_location(filename[:-3], plugin_path)
+                        module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(module)
+                        
+                        if hasattr(module, 'Plugin'):
+                            plugin_instance = module.Plugin(self.launcher_gui)
+                            self.plugins[filename[:-3]] = plugin_instance
+                            self.launcher_gui.log(f"Loaded plugin: {filename}")
+                    except Exception as e:
+                        self.launcher_gui.log(f"Failed to load plugin {filename}: {e}")
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to load plugins: {e}")
+
+    def create_plugin_template(self, plugin_name):
+        template = f'''import tkinter as tk
+from tkinter import ttk
+
+class Plugin:
+    def __init__(self, launcher_gui):
+        self.launcher_gui = launcher_gui
+        self.name = "{plugin_name}"
+        self.description = "A custom plugin for Z-Waifu Launcher"
+        
+    def on_process_start(self, process_name):
+        """Called when a process starts"""
+        self.launcher_gui.log(f"[{self.name}] Process {{process_name}} started")
+        
+    def on_process_stop(self, process_name):
+        """Called when a process stops"""
+        self.launcher_gui.log(f"[{self.name}] Process {{process_name}} stopped")
+        
+    def on_launcher_start(self):
+        """Called when the launcher starts"""
+        self.launcher_gui.log(f"[{self.name}] Launcher started")
+        
+    def on_launcher_stop(self):
+        """Called when the launcher stops"""
+        self.launcher_gui.log(f"[{self.name}] Launcher stopped")
+'''
+        
+        plugin_path = os.path.join(PLUGINS_DIR, f"{plugin_name}.py")
+        try:
+            with open(plugin_path, 'w') as f:
+                f.write(template)
+            self.launcher_gui.log(f"Created plugin template: {plugin_path}")
+            return True
+        except Exception as e:
+            self.launcher_gui.log(f"Failed to create plugin template: {e}")
+            return False
+
+    def get_plugin_list(self):
+        return list(self.plugins.keys())
+
+    def enable_plugin(self, plugin_name):
+        if plugin_name in self.plugins:
+            plugin = self.plugins[plugin_name]
+            if hasattr(plugin, 'on_launcher_start'):
+                plugin.on_launcher_start()
+            self.launcher_gui.log(f"Enabled plugin: {plugin_name}")
+
+    def disable_plugin(self, plugin_name):
+        if plugin_name in self.plugins:
+            plugin = self.plugins[plugin_name]
+            if hasattr(plugin, 'on_launcher_stop'):
+                plugin.on_launcher_stop()
+            self.launcher_gui.log(f"Disabled plugin: {plugin_name}")
+
+# Place this after imports at the top of the file
+TAB_THEMES = {
+    'main_tab':      {'bg': '#23272e', 'fg': '#e6e6e6', 'entry_bg': '#2c2f36', 'entry_fg': '#e6e6e6'},
+    'settings_tab':  {'bg': '#222222', 'fg': '#ffffff', 'entry_bg': '#333333', 'entry_fg': '#cccccc'},
+    'about_tab':     {'bg': '#1a1a1a', 'fg': '#ffcc00', 'entry_bg': '#222222', 'entry_fg': '#ffcc00'},
+    'ollama_tab':    {'bg': '#1e232b', 'fg': '#00ffcc', 'entry_bg': '#23272e', 'entry_fg': '#00ffcc'},
+    'rvc_tab':       {'bg': '#23272e', 'fg': '#ff99cc', 'entry_bg': '#2c2f36', 'entry_fg': '#ff99cc'},
+    'logs_tab':      {'bg': '#181818', 'fg': '#00ff00', 'entry_bg': '#232323', 'entry_fg': '#00ff00'},
+}
+
+class LauncherGUI:
+    def __init__(self, root):
+        self.root = root
+        root.title("Z Launcher")
+        root.geometry("1000x800")
+        root.minsize(800, 600)
+        root.resizable(True, True)
+        root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.status_var = tk.StringVar(value="")
+        status_label = ttk.Label(self.root, textvariable=self.status_var, anchor="w")
+        status_label.pack(side=tk.BOTTOM, fill=tk.X)
+
+        # Initialize batch file paths first
+        self.ooba_bat = None
+        self.zwaifu_bat = None
+        self.ollama_bat = None
+        self.rvc_bat = None
+
+        # Initialize RVC variables
+        self.rvc_host = tk.StringVar(value="127.0.0.1")
+        self.rvc_port = tk.StringVar(value="7897")
+        self.rvc_model = tk.StringVar(value="default")
+        self.rvc_speaker = tk.StringVar(value="0")
+        self.rvc_pitch = tk.StringVar(value="0.0")
+        self.rvc_speed = tk.StringVar(value="1.0")
+
+        # Initialize boolean variables
+        self.ollama_enabled = tk.BooleanVar(value=False)
+        self.rvc_enabled = tk.BooleanVar(value=False)
+
+        # Initialize processes dictionary
+        self.processes = {}
+
+        # Track current theme state
+        self._dark_mode = False
+        
+        # Add thread safety for process management
+        self._process_lock = threading.Lock()
+        self._stop_lock = threading.Lock()
+        self._stop_requested = False
+
+        # Initialize advanced features
+        self.web_interface = None
+        self.api_server = None
+        self.mobile_app = None
+        self.analytics = None
+        self.plugin_manager = None
+
+        # Initialize port variables BEFORE loading config
+        self.ooba_port_var = tk.StringVar(value="7860")
+        self.zwaifu_port_var = tk.StringVar(value="5000")
+
+        # Load config and icon first
+        self.load_config()
+        self.load_icon()
+                         
+
+        # Header frame to hold only the notebook (not the button)
+        self.notebook_frame = ttk.Frame(root)
+        self.notebook_frame.pack(fill=tk.X)
+
+        self.notebook = ttk.Notebook(self.notebook_frame)
+        self.notebook.pack(fill=tk.X, expand=True)
+
+        # Ensure the launcher icon exists on startup
+        if not os.path.exists(ICON_FILE):
+            try:
+                subprocess.run([sys.executable, 'create_launcher_icon.py'], check=True)
+            except Exception as e:
+                print(f"Failed to generate launcher_icon.png: {e}")
+
+        self.auto_detect_batch_files()
+        
+        self.create_main_tab()
+        self.create_cmd_flags_tab()
+        self.create_settings_tab()
+        self.create_about_tab()
+        self.create_ollama_tab()
+        self.create_rvc_tab()
+        self.create_logs_tab()
+        self.create_instance_manager_tab()  # Add instance manager tab
+        # Create individual process tabs with TerminalEmulator support
+        self.create_ooba_tab()
+        self.create_zwaifu_tab()
+        
+        # Initialize advanced features
+        self.initialize_advanced_features()
+        
+        # Initialize process instance tabs
+        if not hasattr(self, 'process_instance_tabs'):
+            self.process_instance_tabs = {'Oobabooga': [], 'Z-Waifu': []}
+        
+        # Create advanced features tab
+        self.create_advanced_features_tab()
+
+        # Create theme toggle button after all tabs are created
+        self.theme_toggle_btn = tk.Button(
+            root,
+            text="🌙",  # Start in dark mode by default
+            font=("Segoe UI Emoji", 12),
+            command=self.toggle_theme,
+            bd=0,
+            relief="flat",
+            padx=0, pady=0,
+            height=1, width=2,
+            bg="#222222",
+            activebackground="#222222",
+            fg="#ffffff",
+            activeforeground="#ffffff"
+        )
+        self.theme_toggle_btn.place(relx=1.0, y=2, anchor="ne")
+        
+        # Set initial theme state based on loaded config
+        self._dark_mode = getattr(self, 'current_theme', 'light') == 'dark'
+        if self._dark_mode:
+            self.set_dark_mode()
+        else:
+            self.set_light_mode()
+        
+        # Update button appearance to match actual theme
+        self._update_theme_button()
+        self.root.update_idletasks()
+
+        # Start periodic status updates
+        self.root.after(1000, self.update_process_status)  # Start after 1 second
+        self.root.after(2000, self.update_instance_manager)  # Update instance manager every 2 seconds
+
+        # System tray icon removed as requested
+
+    def log(self, msg):
+        # Ensure log file exists and append message
+        try:
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(msg + "\n")
+                f.flush()
+        except Exception:
+            pass
+        print(msg)  # Always print to CMD window
+        if hasattr(self, 'main_log') and self.main_log:
+            self.main_log.config(state='normal')
+            self.main_log.insert(tk.END, msg + "\n")
+            self.main_log.see(tk.END)
+            self.main_log.config(state='disabled')
+
+    def set_status(self, msg, color="blue"):
+        self.status_var.set(msg)
+        self.root.update_idletasks()
+
+    def browse_ooba(self):
+        path = filedialog.askopenfilename(title="Select Oobabooga batch file", filetypes=[("Batch files", "*.bat")], initialdir=getattr(self, 'last_dir', os.getcwd()))
+        if path:
+            self.ooba_bat = path
+            self.ooba_path_var.set(path)
+            self.last_dir = os.path.dirname(path)
+            self.save_config()
+            print(f"Selected Oobabooga batch: {path}")
+
+    def browse_zwaifu(self):
+        path = filedialog.askopenfilename(title="Select Z-Waifu batch file", filetypes=[("Batch files", "*.bat")], initialdir=getattr(self, 'last_dir', os.getcwd()))
+        if path:
+            self.zwaifu_bat = path
+            self.zwaifu_path_var.set(path)
+            self.last_dir = os.path.dirname(path)
+            self.save_config()
+            print(f"Selected Z-Waifu batch: {path}")
+
+    def browse_ollama(self):
+        path = filedialog.askopenfilename(title="Select Ollama batch file", filetypes=[("Batch files", "*.bat")], initialdir=getattr(self, 'last_dir', os.getcwd()))
+        if path:
+            self.ollama_bat = path
+            self.ollama_path_var.set(path)
+            self.last_dir = os.path.dirname(path)
+            self.save_config()
+            self.log(f"Selected Ollama batch: {path}")
+
+    def browse_rvc(self):
+        path = filedialog.askopenfilename(title="Select RVC batch file", filetypes=[("Batch files", "*.bat")], initialdir=getattr(self, 'last_dir', os.getcwd()))
+        if path:
+            self.rvc_bat = path
+            self.rvc_path_var.set(path)
+            self.last_dir = os.path.dirname(path)
+            self.save_config()
+            self.log(f"Selected RVC batch: {path}")
+
+    def save_ooba(self):
+        save_config(self.ooba_bat, self.zwaifu_bat)
+        self.log(f"[Oobabooga] Saved as default: {self.ooba_bat}")
+
+    def save_zwaifu(self):
+        save_config(self.ooba_bat, self.zwaifu_bat)
+        self.log(f"[Z-Waifu] Saved as default: {self.zwaifu_bat}")
+
+    def is_port_in_use(self, port):
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            return s.connect_ex(('127.0.0.1', port)) == 0
+
+    def launch(self):
+        # Launch both Oobabooga and Z-Waifu if batch files are set, else prompt user
+        if not self.ooba_bat or not os.path.exists(self.ooba_bat):
+            messagebox.showerror("Error", "Oobabooga batch file not set! Please browse and select it in Settings.")
+            return
+        if not self.zwaifu_bat or not os.path.exists(self.zwaifu_bat):
+            messagebox.showerror("Error", "Z-Waifu batch file not set! Please browse and select it in Settings.")
+            return
+        try:
+            ooba_port = int(self.ooba_port_var.get())
+            zwaifu_port = int(self.zwaifu_port_var.get())
+        except Exception:
+            messagebox.showerror("Invalid Port", "Both ports must be numbers.")
+            return
+        if self.is_port_in_use(ooba_port):
+            messagebox.showerror("Port In Use", f"Oobabooga port {ooba_port} is already in use. Please choose another port or stop the process using it.")
+            return
+        if self.is_port_in_use(zwaifu_port):
+            messagebox.showerror("Port In Use", f"Z-Waifu port {zwaifu_port} is already in use. Please choose another port or stop the process using it.")
+            return
+        self.start_btn.config(state='disabled')
+        self.stop_all_btn.config(state='normal')  # Always allow stop
+        self.set_status("Launching Oobabooga and Z-Waifu...", "green")
+        self._stop_requested = False
+        threading.Thread(target=self._launch_thread, args=(ooba_port, zwaifu_port), daemon=True).start()
+
+    def _launch_thread(self, ooba_port, zwaifu_port):
+        try:
+            # Initialize stop request flag with proper synchronization
+            with self._stop_lock:
+                self._stop_requested = False
+            
+            # Check stop flag before starting processes
+            with self._stop_lock:
+                if self._stop_requested:
+                    self.log("[LAUNCH] Launch cancelled by stop request")
+                    return
+            
+            # Start Oobabooga with thread safety
+            with self._process_lock:
+                # Double-check stop flag before creating process
+                with self._stop_lock:
+                    if self._stop_requested:
+                        self.log("[LAUNCH] Launch cancelled by stop request")
+                        return
+                
+                self.log(f"[Oobabooga] Starting: {self.ooba_bat}")
+                self.ooba_proc = subprocess.Popen([self.ooba_bat], cwd=os.path.dirname(self.ooba_bat), shell=True)
+            
+            self.set_status(f"Waiting for Oobabooga on port {ooba_port}...", "orange")
+            
+            # Wait for port, but allow interruption
+            start = time.time()
+            while time.time() - start < 120:
+                # Check stop request atomically with process state
+                with self._stop_lock:
+                    stop_requested = self._stop_requested
+                
+                if stop_requested:
+                    with self._process_lock:
+                        if self.ooba_proc and self.ooba_proc.poll() is None:
+                            self.ooba_proc.kill()
+                            try:
+                                self.ooba_proc.wait(timeout=5)  # Wait for process to terminate
+                            except subprocess.TimeoutExpired:
+                                self.ooba_proc.terminate()  # Force terminate if needed
+                    self.set_status("Oobabooga launch stopped by user.", "red")
+                    self.log("[Oobabooga] Launch stopped by user.")
+                    self.start_btn.config(state='normal')
+                    self.stop_all_btn.config(state='disabled')
+                    return
+                
+                try:
+                    with socket.create_connection(("127.0.0.1", ooba_port), timeout=1):
+                        break
+                except (socket.timeout, ConnectionRefusedError):
+                    pass
+                self.log(f"Waiting for Oobabooga on port {ooba_port}...")
+                time.sleep(1)
+            else:
+                self.set_status("Timeout waiting for Oobabooga!", "red")
+                self.log("[ERROR] Timeout waiting for Oobabooga. Killing process.")
+                with self._process_lock:
+                    if self.ooba_proc and self.ooba_proc.poll() is None:
+                        self.ooba_proc.kill()
+                        try:
+                            self.ooba_proc.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            self.ooba_proc.terminate()
+                self.start_btn.config(state='normal')
+                self.stop_all_btn.config(state='disabled')
+                return
+                
+            self.set_status("✅ Oobabooga instance started successfully!", "green")
+            self.log("✅ Oobabooga instance started successfully!")
+            
+            # Start Z-Waifu with thread safety
+            with self._process_lock:
+                # Check stop flag before creating Z-Waifu process
+                with self._stop_lock:
+                    if self._stop_requested:
+                        self.log("[LAUNCH] Z-Waifu launch cancelled by stop request")
+                        # Clean up Oobabooga process if it was started
+                        if hasattr(self, 'ooba_proc') and self.ooba_proc and self.ooba_proc.poll() is None:
+                            try:
+                                self.ooba_proc.kill()
+                                self.ooba_proc.wait(timeout=5)
+                            except Exception:
+                                pass
+                        return
+                
+                self.log(f"[Z-Waifu] Starting: {self.zwaifu_bat}")
+                self.zwaifu_proc = subprocess.Popen([self.zwaifu_bat], cwd=os.path.dirname(self.zwaifu_bat), shell=True)
+            
+            # Wait for Z-Waifu port, allow interruption
+            start = time.time()
+            while time.time() - start < 120:
+                # Check stop request atomically with process state
+                with self._stop_lock:
+                    stop_requested = self._stop_requested
+                
+                if stop_requested:
+                    with self._process_lock:
+                        if self.zwaifu_proc and self.zwaifu_proc.poll() is None:
+                            self.zwaifu_proc.kill()
+                            try:
+                                self.zwaifu_proc.wait(timeout=5)  # Wait for process to terminate
+                            except subprocess.TimeoutExpired:
+                                self.zwaifu_proc.terminate()  # Force terminate if needed
+                    self.set_status("Z-Waifu launch stopped by user.", "red")
+                    self.log("[Z-Waifu] Launch stopped by user.")
+                    self.start_btn.config(state='normal')
+                    self.stop_all_btn.config(state='disabled')
+                    return
+                
+                try:
+                    with socket.create_connection(("127.0.0.1", zwaifu_port), timeout=1):
+                        break
+                except (socket.timeout, ConnectionRefusedError):
+                    pass
+                self.log(f"Waiting for Z-Waifu on port {zwaifu_port}...")
+                time.sleep(1)
+            else:
+                self.set_status("Timeout waiting for Z-Waifu!", "red")
+                self.log("[ERROR] Timeout waiting for Z-Waifu. Killing process.")
+                with self._process_lock:
+                    if self.zwaifu_proc and self.zwaifu_proc.poll() is None:
+                        self.zwaifu_proc.kill()
+                        try:
+                            self.zwaifu_proc.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            self.zwaifu_proc.terminate()
+                self.start_btn.config(state='normal')
+                self.stop_all_btn.config(state='disabled')
+                return
+                
+            self.set_status("✅ Z-Waifu instance started successfully!", "green")
+            self.log("✅ Z-Waifu instance started successfully!")
+            self.log("Both Oobabooga and Z-Waifu started successfully.")
+            self.log(f"Oobabooga batch: {self.ooba_bat}")
+            self.log(f"Z-Waifu batch:   {self.zwaifu_bat}")
+        except Exception as e:
+            self.set_status(f"Error: {e}", "red")
+            self.log(f"[ERROR] {e}")
+            # Ensure proper cleanup with thread safety
+            with self._process_lock:
+                if hasattr(self, 'ooba_proc') and self.ooba_proc and self.ooba_proc.poll() is None:
+                    try:
+                        self.ooba_proc.kill()
+                        self.ooba_proc.wait(timeout=5)
+                    except Exception:
+                        pass
+                if hasattr(self, 'zwaifu_proc') and self.zwaifu_proc and self.zwaifu_proc.poll() is None:
+                    try:
+                        self.zwaifu_proc.kill()
+                        self.zwaifu_proc.wait(timeout=5)
+                    except Exception:
+                        pass
+            self.start_btn.config(state='normal')
+            self.stop_all_btn.config(state='disabled')
+
+    def load_config(self):
+        """Load configuration with validation and error handling"""
+        if os.path.exists(CONFIG_FILE):
+            try:
+                # Read config file with proper encoding
+                with open(CONFIG_FILE, "r", encoding='utf-8') as f:
+                    config_data = json.load(f)
+                
+                # Validate and sanitize config data
+                config_data = self._validate_config_data(config_data)
+                
+                # Load validated data with error handling for each field
+                try:
+                    self.ooba_bat = config_data.get("ooba_bat")
+                    self.zwaifu_bat = config_data.get("zwaifu_bat")
+                    self.ollama_enabled.set(config_data.get("ollama_enabled", False))
+                    self.ollama_bat = config_data.get("ollama_bat")
+                    self.rvc_enabled.set(config_data.get("rvc_enabled", False))
+                    self.rvc_host.set(config_data.get("rvc_host", "127.0.0.1"))
+                    self.rvc_port.set(config_data.get("rvc_port", "7897"))
+                    self.rvc_model.set(config_data.get("rvc_model", "default"))
+                    self.rvc_speaker.set(config_data.get("rvc_speaker", "0"))
+                    self.rvc_pitch.set(config_data.get("rvc_pitch", "0.0"))
+                    self.rvc_speed.set(config_data.get("rvc_speed", "1.0"))
+                    self.rvc_bat = config_data.get("rvc_bat")
+                    self.current_theme = config_data.get("theme", "light")
+                    self.last_port = config_data.get("port", "5000")
+                    self.last_dir = config_data.get("last_dir", os.getcwd())
+                except Exception as e:
+                    self.log(f"Error loading config fields: {e}. Using defaults for failed fields.")
+                
+                # Load and validate port settings with enhanced error handling
+                try:
+                    ooba_port = str(config_data.get("ooba_port", "7860"))
+                    zwaifu_port = str(config_data.get("zwaifu_port", "5000"))
+                    
+                    # Validate port numbers
+                    if self._is_valid_port(ooba_port):
+                        self.ooba_port_var.set(ooba_port)
+                    else:
+                        self.ooba_port_var.set("7860")
+                        self.log("Invalid Oobabooga port in config, using default: 7860")
+                    
+                    if self._is_valid_port(zwaifu_port):
+                        self.zwaifu_port_var.set(zwaifu_port)
+                    else:
+                        self.zwaifu_port_var.set("5000")
+                        self.log("Invalid Z-Waifu port in config, using default: 5000")
+                except Exception as e:
+                    self.log(f"Error loading port settings: {e}. Using defaults.")
+                    self.ooba_port_var.set("7860")
+                    self.zwaifu_port_var.set("5000")
+                
+                # Load auto-start settings with validation
+                try:
+                    if hasattr(self, 'auto_start_ooba'):
+                        self.auto_start_ooba.set(config_data.get("auto_start_ooba", False))
+                    if hasattr(self, 'auto_start_zwaifu'):
+                        self.auto_start_zwaifu.set(config_data.get("auto_start_zwaifu", False))
+                    if hasattr(self, 'auto_start_ollama'):
+                        self.auto_start_ollama.set(config_data.get("auto_start_ollama", False))
+                    if hasattr(self, 'auto_start_rvc'):
+                        self.auto_start_rvc.set(config_data.get("auto_start_rvc", False))
+                except Exception as e:
+                    self.log(f"Error loading auto-start settings: {e}. Using defaults.")
+                
+                self.log("Configuration loaded successfully")
+                
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                self.log(f"Error reading config file: {e}. Using default settings.")
+                self._set_default_config()
+            except Exception as e:
+                self.log(f"Unexpected error loading config: {e}. Using default settings.")
+                self._set_default_config()
+        else:
+            self.log("Config file not found, using default settings")
+            self._set_default_config()
+
+    def _validate_config_data(self, config_data):
+        """Validate and sanitize configuration data"""
+        if not isinstance(config_data, dict):
+            return {}
+        
+        # Validate file paths
+        for key in ["ooba_bat", "zwaifu_bat", "ollama_bat", "rvc_bat"]:
+            if key in config_data and config_data[key]:
+                # Ensure path is within project directory for security
+                if not self._is_safe_path(config_data[key]):
+                    self.log(f"Unsafe path in config for {key}: {config_data[key]}")
+                    config_data[key] = None
+        
+        # Validate theme
+        if "theme" in config_data and config_data["theme"] not in ["light", "dark"]:
+            config_data["theme"] = "light"
+        
+        # Validate last_dir
+        if "last_dir" in config_data and not self._is_safe_path(config_data["last_dir"]):
+            config_data["last_dir"] = os.getcwd()
+        
+        return config_data
+
+    def _is_safe_path(self, path):
+        """Check if a path is safe (within project directory) with enhanced security"""
+        if not path or not isinstance(path, str):
+            return False
+        
+        try:
+            # Normalize path to prevent path traversal attacks
+            normalized_path = os.path.normpath(path)
+            
+            # Check for path traversal attempts and suspicious patterns
+            suspicious_patterns = [
+                '..',      # Directory traversal
+                '~',       # Home directory
+                '//',      # Multiple slashes
+                '\\',      # Backslashes (Windows path traversal)
+                ':',       # Drive letter separator (Windows)
+                '|',       # Pipe character
+                '*',       # Wildcard
+                '?',       # Wildcard
+                '<',       # Redirection
+                '>',       # Redirection
+                '"',       # Quote
+                "'",       # Quote
+                '%',       # URL encoding
+                '&',       # Command separator
+                ';',       # Command separator
+                '`',       # Command substitution
+                '$',       # Variable substitution
+            ]
+            
+            # Check for suspicious patterns in the normalized path
+            for pattern in suspicious_patterns:
+                if pattern in normalized_path:
+                    return False
+            
+            # Check for path traversal attempts
+            if '..' in normalized_path or normalized_path.startswith('/'):
+                return False
+            
+            # Resolve relative paths
+            abs_path = os.path.abspath(normalized_path)
+            project_root = os.path.abspath(PROJECT_ROOT)
+            
+            # Additional check: ensure the path doesn't contain any directory traversal
+            path_parts = abs_path.split(os.sep)
+            for part in path_parts:
+                if part == '..' or part.startswith('..') or part.startswith('.'):
+                    return False
+            
+            # Check if path is within project directory
+            # Use os.path.commonpath for more secure comparison
+            try:
+                common_path = os.path.commonpath([abs_path, project_root])
+                return common_path == project_root
+            except ValueError:
+                # Paths on different drives (Windows)
+                return abs_path.startswith(project_root)
+                
+        except Exception:
+            return False
+
+    def _is_valid_port(self, port_str):
+        """Validate port number"""
+        try:
+            port = int(port_str)
+            return 1 <= port <= 65535
+        except (ValueError, TypeError):
+            return False
+
+    def _set_default_config(self):
+        """Set default configuration values"""
+        self.ooba_bat = None
+        self.zwaifu_bat = None
+        self.ollama_enabled.set(False)
+        self.ollama_bat = None
+        self.rvc_enabled.set(False)
+        self.rvc_host.set("127.0.0.1")
+        self.rvc_port.set("7897")
+        self.rvc_model.set("default")
+        self.rvc_speaker.set("0")
+        self.rvc_pitch.set("0.0")
+        self.rvc_speed.set("1.0")
+        self.rvc_bat = None
+        self.current_theme = "light"
+        self.last_port = "5000"
+        self.last_dir = os.getcwd()
+        self.ooba_port_var.set("7860")
+        self.zwaifu_port_var.set("5000")
+
+    def save_config(self):
+        """Save configuration with validation and error handling"""
+        try:
+            # Validate paths before saving
+            config_data = {
+                "ooba_bat": self.ooba_bat if self._is_safe_path(self.ooba_bat) else None,
+                "zwaifu_bat": self.zwaifu_bat if self._is_safe_path(self.zwaifu_bat) else None,
+                "ollama_enabled": self.ollama_enabled.get(),
+                "ollama_bat": self.ollama_bat if self._is_safe_path(self.ollama_bat) else None,
+                "rvc_enabled": self.rvc_enabled.get(),
+                "rvc_host": self.rvc_host.get(),
+                "rvc_port": self.rvc_port.get(),
+                "rvc_model": self.rvc_model.get(),
+                "rvc_speaker": self.rvc_speaker.get(),
+                "rvc_pitch": self.rvc_pitch.get(),
+                "rvc_speed": self.rvc_speed.get(),
+                "rvc_bat": self.rvc_bat if self._is_safe_path(self.rvc_bat) else None,
+                "theme": getattr(self, 'current_theme', 'light'),
+                "port": getattr(self, 'last_port', '5000'),
+                "auto_start_ooba": getattr(self, 'auto_start_ooba', tk.BooleanVar(value=False)).get(),
+                "auto_start_zwaifu": getattr(self, 'auto_start_zwaifu', tk.BooleanVar(value=False)).get(),
+                "auto_start_ollama": getattr(self, 'auto_start_ollama', tk.BooleanVar(value=False)).get(),
+                "auto_start_rvc": getattr(self, 'auto_start_rvc', tk.BooleanVar(value=False)).get(),
+                "ooba_port": self.ooba_port_var.get(),
+                "zwaifu_port": self.zwaifu_port_var.get(),
+                "last_dir": getattr(self, 'last_dir', os.getcwd()) if self._is_safe_path(getattr(self, 'last_dir', os.getcwd())) else os.getcwd()
+            }
+            
+            # Ensure config directory exists
+            config_dir = os.path.dirname(CONFIG_FILE)
+            os.makedirs(config_dir, exist_ok=True)
+            
+            # Write config with proper encoding and error handling
+            with open(CONFIG_FILE, "w", encoding='utf-8') as f:
+                json.dump(config_data, f, indent=2, ensure_ascii=False)
+                
+            self.log("Configuration saved successfully")
+            
+        except Exception as e:
+            self.log(f"Error saving configuration: {e}")
+            # Don't raise the exception to prevent application crash
+
+    def load_icon(self):
+        if os.path.exists(ICON_FILE):
+            self.icon = tk.PhotoImage(file=ICON_FILE)
+            self.root.iconphoto(True, self.icon)
+            from io import BytesIO
+            with open(ICON_FILE, "rb") as f:
+                self.tray_icon = Image.open(BytesIO(f.read()))
+        else:
+            self.icon = None
+            # Fallback: create a blank icon for pystray
+            self.tray_icon = Image.new("RGBA", (64, 64), (255, 255, 255, 0))
+
+    def load_theme(self):
+        """
+        Load and apply the saved theme from config.
+        """
+        if hasattr(self, 'current_theme'):
+            if self.current_theme == 'dark':
+                self.set_dark_mode()
+            else:
+                self.set_light_mode()
+        else:
+            self.set_light_mode()
+
+    def create_main_tab(self):
+        main_tab = ttk.Frame(self.notebook)
+        self.notebook.add(main_tab, text="Main")
+        # Start/Stop All Controls
+        control_frame = ttk.Frame(main_tab)
+        control_frame.pack(padx=10, pady=10, fill=tk.X)
+        self.start_btn = ttk.Button(control_frame, text="Start All", command=self.launch)
+        self.start_btn.pack(side=tk.LEFT, padx=(0, 5))
+        self.stop_all_btn = ttk.Button(control_frame, text="Stop All", command=self.stop_all_processes)
+        self.stop_all_btn.pack(side=tk.LEFT, padx=5)
+        self.launch_main_btn = ttk.Button(control_frame, text="Launch Main Program", command=self.launch_main_program)
+        self.launch_main_btn.pack(side=tk.LEFT, padx=5)
+        # Main log area
+        log_frame = ttk.LabelFrame(main_tab, text="Log")
+        log_frame.pack(padx=10, pady=(0,10), fill=tk.BOTH, expand=True)
+        self.main_log = scrolledtext.ScrolledText(log_frame, state='disabled', font=("Consolas", 9))
+        self.main_log.pack(fill=tk.BOTH, expand=True)
+        # Main program output area
+        main_prog_frame = ttk.LabelFrame(main_tab, text="Main Program Output")
+        main_prog_frame.pack(padx=10, pady=(0,10), fill=tk.BOTH, expand=True)
+        self.main_program_output = scrolledtext.ScrolledText(main_prog_frame, state='disabled', font=("Consolas", 9))
+        self.main_program_output.pack(in_=main_prog_frame, fill=tk.BOTH, expand=True)
+        self.main_tab = main_tab # Assign for styling
+        self.style_widgets(main_tab, '#f0f0f0', '#000000', '#ffffff', '#000000') # Style main tab
+
+        self.add_demo_buttons()
+
+    def create_cmd_flags_tab(self):
+        """Create CMD_FLAGS.txt editor tab"""
+        cmd_flags_tab = ttk.Frame(self.notebook)
+        self.notebook.add(cmd_flags_tab, text="CMD Flags")
+        
+        # Title and description
+        title_frame = ttk.Frame(cmd_flags_tab)
+        title_frame.pack(fill=tk.X, padx=10, pady=(10,5))
+        ttk.Label(title_frame, text="CMD_FLAGS.txt Editor", font=("Arial", 12, "bold")).pack(anchor=tk.W)
+        ttk.Label(title_frame, text="Edit Oobabooga command line flags", font=("Arial", 9)).pack(anchor=tk.W)
+        
+        # Control buttons
+        control_frame = ttk.Frame(cmd_flags_tab)
+        control_frame.pack(fill=tk.X, padx=10, pady=(0,10))
+        ttk.Button(control_frame, text="Load File", command=self.load_cmd_flags).pack(side=tk.LEFT, padx=(0,5))
+        ttk.Button(control_frame, text="Save File", command=self.save_cmd_flags).pack(side=tk.LEFT, padx=5)
+        ttk.Button(control_frame, text="Reset to Default", command=self.reset_cmd_flags).pack(side=tk.LEFT, padx=5)
+        
+        # Text editor
+        editor_frame = ttk.LabelFrame(cmd_flags_tab, text="CMD_FLAGS.txt Content")
+        editor_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,10))
+        
+        self.cmd_flags_text = scrolledtext.ScrolledText(editor_frame, font=("Consolas", 10), wrap=tk.NONE)
+        self.cmd_flags_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Status bar
+        self.cmd_flags_status_var = tk.StringVar(value="Ready")
+        status_bar = ttk.Label(cmd_flags_tab, textvariable=self.cmd_flags_status_var, relief=tk.SUNKEN, anchor=tk.W)
+        status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=(0,10))
+        
+        # Load initial content
+        self.load_cmd_flags()
+        
+        self.style_widgets(cmd_flags_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
+        self.cmd_flags_tab = cmd_flags_tab
+
+    def load_cmd_flags(self):
+        """Load CMD_FLAGS.txt content into the editor, with file selector fallback if missing."""
+        try:
+            cmd_flags_path = CMD_FLAGS_FILE
+            if not os.path.exists(cmd_flags_path):
+                # Prompt user to locate the file
+                msg = "CMD_FLAGS.txt not found. Would you like to locate it manually?"
+                if messagebox.askyesno("CMD_FLAGS.txt Not Found", msg):
+                    path = filedialog.askopenfilename(title="Locate CMD_FLAGS.txt", filetypes=[("Text files", "*.txt")], initialdir=getattr(self, 'last_dir', os.getcwd()))
+                    if path and os.path.exists(path):
+                        cmd_flags_path = path
+                        self.last_dir = os.path.dirname(path)
+                        self.save_config()
+                        self.log(f"[CMD Flags] User selected CMD_FLAGS.txt: {path}")
+                    else:
+                        self.log("[CMD Flags] User cancelled file selection or file does not exist.")
+                # If still not found, create default content
+                if not os.path.exists(cmd_flags_path):
+                    default_content = """# Oobabooga CMD Flags\n# Add your command line flags here\n# Example:\n# --listen\n# --port 7860\n# --api\n# --extensions api\n"""
+                    self.cmd_flags_text.delete('1.0', tk.END)
+                    self.cmd_flags_text.insert('1.0', default_content)
+                    self.cmd_flags_status_var.set("Created default content (file not found)")
+                    self.log("[CMD Flags] File not found, created default content")
+                    return
+            # Load the file
+            with open(cmd_flags_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            self.cmd_flags_text.delete('1.0', tk.END)
+            self.cmd_flags_text.insert('1.0', content)
+            self.cmd_flags_status_var.set(f"Loaded: {cmd_flags_path}")
+            self.log(f"[CMD Flags] Loaded file: {cmd_flags_path}")
+        except Exception as e:
+            self.cmd_flags_status_var.set(f"Error loading file: {e}")
+            self.log(f"[CMD Flags] Error loading file: {e}")
+
+    def save_cmd_flags(self):
+        """Save CMD_FLAGS.txt content from the editor"""
+        try:
+            content = self.cmd_flags_text.get('1.0', tk.END)
+            
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(CMD_FLAGS_FILE), exist_ok=True)
+            
+            with open(CMD_FLAGS_FILE, 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            self.cmd_flags_status_var.set(f"Saved: {CMD_FLAGS_FILE}")
+            self.log(f"[CMD Flags] Saved file: {CMD_FLAGS_FILE}")
+            messagebox.showinfo("Success", "CMD_FLAGS.txt has been saved successfully!")
+        except Exception as e:
+            self.cmd_flags_status_var.set(f"Error saving file: {e}")
+            self.log(f"[CMD Flags] Error saving file: {e}")
+            messagebox.showerror("Error", f"Failed to save CMD_FLAGS.txt: {e}")
+
+    def reset_cmd_flags(self):
+        """Reset CMD_FLAGS.txt to default content"""
+        if messagebox.askyesno("Reset CMD Flags", "Are you sure you want to reset CMD_FLAGS.txt to default content?"):
+            default_content = """# Oobabooga CMD Flags
+# Add your command line flags here
+# Example:
+# --listen
+# --port 7860
+# --api
+# --extensions api
+"""
+            self.cmd_flags_text.delete('1.0', tk.END)
+            self.cmd_flags_text.insert('1.0', default_content)
+            self.cmd_flags_status_var.set("Reset to default content")
+            self.log("[CMD Flags] Reset to default content")
+            
+            # Auto-save after reset
+            self.save_cmd_flags()
+
+    def create_settings_tab(self):
+        settings_tab = ttk.Frame(self.notebook)
+        self.notebook.add(settings_tab, text="Settings")
+
+        # Create a scrollable frame for settings
+        canvas = tk.Canvas(settings_tab)
+        scrollbar = ttk.Scrollbar(settings_tab, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas)  # Use tk.Frame so bg can be set
+
+        # Store for theme switching
+        self.settings_canvas = canvas
+        self.settings_scrollable_frame = scrollable_frame
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Preferences and options
+        prefs_frame = ttk.LabelFrame(scrollable_frame, text="Preferences")
+        prefs_frame.pack(padx=10, pady=10, fill=tk.X)
+
+        # Auto-start options
+        auto_frame = ttk.LabelFrame(scrollable_frame, text="Auto-Start Options")
+        auto_frame.pack(padx=10, pady=10, fill=tk.X)
+        
+        self.auto_start_ooba = tk.BooleanVar(value=False)
+        self.auto_start_zwaifu = tk.BooleanVar(value=False)
+        self.auto_start_ollama = tk.BooleanVar(value=False)
+        self.auto_start_rvc = tk.BooleanVar(value=False)
+        
+        ttk.Checkbutton(auto_frame, text="Auto-start Oobabooga", variable=self.auto_start_ooba).pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Checkbutton(auto_frame, text="Auto-start Z-Waifu", variable=self.auto_start_zwaifu).pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Checkbutton(auto_frame, text="Auto-start Ollama", variable=self.auto_start_ollama).pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Checkbutton(auto_frame, text="Auto-start RVC", variable=self.auto_start_rvc).pack(anchor=tk.W, padx=5, pady=2)
+
+        # Port settings
+        port_frame = ttk.LabelFrame(scrollable_frame, text="Port Settings")
+        port_frame.pack(padx=10, pady=10, fill=tk.X)
+        
+        ttk.Label(port_frame, text="Oobabooga Port:").pack(anchor=tk.W, padx=5, pady=2)
+        self.ooba_port_var = tk.StringVar(value="7860")
+        ooba_port_entry = ttk.Entry(port_frame, textvariable=self.ooba_port_var, width=10)
+        ooba_port_entry.pack(anchor=tk.W, padx=5, pady=2)
+        ooba_port_entry.bind('<FocusOut>', lambda e: self.save_config())
+        
+        ttk.Label(port_frame, text="Z-Waifu Port:").pack(anchor=tk.W, padx=5, pady=2)
+        self.zwaifu_port_var = tk.StringVar(value="5000")
+        zwaifu_port_entry = ttk.Entry(port_frame, textvariable=self.zwaifu_port_var, width=10)
+        zwaifu_port_entry.pack(anchor=tk.W, padx=5, pady=2)
+        zwaifu_port_entry.bind('<FocusOut>', lambda e: self.save_config())
+        
+        # Add port validation
+        def validate_port(P):
+            if P == "": return True
+            try:
+                port = int(P)
+                return 1 <= port <= 65535
+            except ValueError:
+                return False
+        
+        # Apply validation to port entries
+        vcmd = (self.root.register(validate_port), '%P')
+        ooba_port_entry.config(validate='key', validatecommand=vcmd)
+        zwaifu_port_entry.config(validate='key', validatecommand=vcmd)
+
+        # Batch file settings
+        batch_frame = ttk.LabelFrame(scrollable_frame, text="Batch File Settings")
+        batch_frame.pack(padx=10, pady=10, fill=tk.X)
+        
+        # Oobabooga batch
+        ttk.Label(batch_frame, text="Oobabooga Batch File:").pack(anchor=tk.W, padx=5, pady=2)
+        self.ooba_path_var = tk.StringVar(value=self.ooba_bat or "Not set")
+        ttk.Entry(batch_frame, textvariable=self.ooba_path_var, state='readonly').pack(fill=tk.X, padx=5, pady=2)
+        ttk.Button(batch_frame, text="Browse Oobabooga", command=self.browse_ooba).pack(anchor=tk.W, padx=5, pady=2)
+        
+        # Z-Waifu batch
+        ttk.Label(batch_frame, text="Z-Waifu Batch File:").pack(anchor=tk.W, padx=5, pady=2)
+        self.zwaifu_path_var = tk.StringVar(value=self.zwaifu_bat or "Not set")
+        ttk.Entry(batch_frame, textvariable=self.zwaifu_path_var, state='readonly').pack(fill=tk.X, padx=5, pady=2)
+        ttk.Button(batch_frame, text="Browse Z-Waifu", command=self.browse_zwaifu).pack(anchor=tk.W, padx=5, pady=2)
+
+        # Theme settings
+        theme_frame = ttk.LabelFrame(scrollable_frame, text="Theme")
+        theme_frame.pack(padx=10, pady=10, fill=tk.X)
+        ttk.Button(theme_frame, text="Dark Mode", command=self.set_dark_mode_from_settings).pack(side=tk.LEFT, padx=5, pady=5)
+        ttk.Button(theme_frame, text="Light Mode", command=self.set_light_mode_from_settings).pack(side=tk.LEFT, padx=5, pady=5)
+
+        # Save settings button
+        save_btn = ttk.Button(scrollable_frame, text="Save Settings", command=self.save_settings)
+        save_btn.pack(padx=10, pady=10)
+
+        # Pack canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self.settings_tab = settings_tab # Assign for styling
+        self.style_widgets(settings_tab, '#f0f0f0', '#000000', '#ffffff', '#000000') # Style settings tab
+        
+    def save_settings(self):
+        """
+        Save all settings to config file.
+        """
+        try:
+            self.save_config()
+            messagebox.showinfo("Settings Saved", "Settings have been saved successfully!")
+            self.log("[Settings] Configuration saved")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save settings: {e}")
+            self.log(f"[Settings] Error saving configuration: {e}")
+
+    def style_widgets(self, parent, bg_color, fg_color, entry_bg, entry_fg):
+        for child in parent.winfo_children():
+            cls = child.__class__.__name__
+            if cls in ['Label', 'Checkbutton', 'Button', 'Frame', 'Labelframe']:
+                try:
+                    child.config(bg=bg_color, fg=fg_color)
+                except Exception:
+                    pass
+            elif cls == 'Entry':
+                try:
+                    child.config(bg=entry_bg, fg=entry_fg, insertbackground=fg_color)
+                except Exception:
+                    pass
+            elif cls in ['Text', 'ScrolledText', 'Listbox']:
+                try:
+                    child.config(bg=entry_bg, fg=entry_fg, insertbackground=fg_color)
+                except Exception:
+                    pass
+            elif cls == 'Radiobutton':
+                try:
+                    child.config(bg=bg_color, fg=fg_color, selectcolor=entry_bg)
+                except Exception:
+                    pass
+            elif cls == 'Scale':
+                try:
+                    child.config(bg=bg_color, fg=fg_color, troughcolor=entry_bg)
+                except Exception:
+                    pass
+            elif cls == 'Spinbox':
+                try:
+                    child.config(bg=entry_bg, fg=entry_fg, insertbackground=fg_color)
+                except Exception:
+                    pass
+            # Recursively style children
+            if hasattr(child, 'winfo_children') and child.winfo_children():
+                self.style_widgets(child, bg_color, fg_color, entry_bg, entry_fg)
+
+    def set_dark_mode(self):
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('.', background='#222222', foreground='#ffffff')
+        style.configure('TLabel', background='#222222', foreground='#ffffff')
+        style.configure('TFrame', background='#222222')
+        style.configure('TButton', background='#333333', foreground='#ffffff')
+        style.configure('TNotebook', background='#222222')
+        style.configure('TNotebook.Tab', background='#333333', foreground='#ffffff')
+        style.configure('TEntry', fieldbackground='#333333', foreground='#cccccc', insertcolor='#ffffff')
+        self.root.configure(bg='#222222')
+        self.current_theme = 'dark'
+        self._dark_mode = True
+        if hasattr(self, 'settings_canvas'):
+            self.settings_canvas.config(bg='#222222')
+        if hasattr(self, 'settings_scrollable_frame'):
+            self.settings_scrollable_frame.config(bg='#222222')
+            self.style_widgets(self.settings_scrollable_frame, '#222222', '#ffffff', '#333333', '#cccccc')
+        for tab_attr in ['main_tab', 'settings_tab', 'about_tab', 'ollama_tab', 'rvc_tab', 'logs_tab', 'ooba_tab', 'zwaifu_tab']:
+            if hasattr(self, tab_attr):
+                theme = TAB_THEMES.get(tab_attr, {'bg': '#222222', 'fg': '#ffffff', 'entry_bg': '#333333', 'entry_fg': '#cccccc'})
+                self.style_widgets(getattr(self, tab_attr), theme['bg'], theme['fg'], theme['entry_bg'], theme['entry_fg'])
+        self.save_config()
+        # Update theme toggle button
+        self._update_theme_button()
+
+    def set_light_mode(self):
+        style = ttk.Style()
+        style.theme_use('default')
+        style.configure('.', background='#f0f0f0', foreground='#000000')
+        style.configure('TLabel', background='#f0f0f0', foreground='#000000')
+        style.configure('TFrame', background='#f0f0f0')
+        style.configure('TButton', background='#e0e0e0', foreground='#000000')
+        style.configure('TNotebook', background='#f0f0f0')
+        style.configure('TNotebook.Tab', background='#e0e0e0', foreground='#000000')
+        style.configure('TEntry', fieldbackground='#ffffff', foreground='#000000', insertcolor='#000000')
+        self.root.configure(bg='#f0f0f0')
+        self.current_theme = 'light'
+        self._dark_mode = False
+        if hasattr(self, 'settings_canvas'):
+            self.settings_canvas.config(bg='#f0f0f0')
+        if hasattr(self, 'settings_scrollable_frame'):
+            self.settings_scrollable_frame.config(bg='#f0f0f0')
+            self.style_widgets(self.settings_scrollable_frame, '#f0f0f0', '#000000', '#ffffff', '#000000')
+        for tab_attr in ['main_tab', 'settings_tab', 'about_tab', 'ollama_tab', 'rvc_tab', 'logs_tab', 'ooba_tab', 'zwaifu_tab']:
+            if hasattr(self, tab_attr):
+                theme = TAB_THEMES.get(tab_attr, {'bg': '#f0f0f0', 'fg': '#000000', 'entry_bg': '#ffffff', 'entry_fg': '#000000'})
+                self.style_widgets(getattr(self, tab_attr), theme['bg'], theme['fg'], theme['entry_bg'], theme['entry_fg'])
+        self.save_config()
+        # Update theme toggle button
+        self._update_theme_button()
+
+    def set_dark_mode_from_settings(self):
+        self.set_dark_mode()
+
+    def set_light_mode_from_settings(self):
+        self.set_light_mode()
+
+    def create_about_tab(self):
+        about_tab = ttk.Frame(self.notebook)
+        self.notebook.add(about_tab, text="About")
+
+        # About and help information
+        about_text = scrolledtext.ScrolledText(about_tab, wrap=tk.WORD, font=("Arial", 11))
+        about_text.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+        about_text.insert(tk.END, "Z Launcher\n\n")
+        about_text.insert(tk.END, "Version: 1.0.0\n")
+        about_text.insert(tk.END, "Author: Drakkadakka\n")
+        about_text.insert(tk.END, "GitHub: https://github.com/Drakkadakka\n")
+        about_text.insert(tk.END, "Email: Drakkadakka@users.noreply.github.com\n\n")
+        about_text.insert(tk.END, "A powerful launcher for managing Oobabooga, Z-Waifu, Ooba-LLaMA, and RVC processes.\n\n")
+        about_text.insert(tk.END, "For more information and updates, visit:\n")
+        about_text.insert(tk.END, "https://github.com/Drakkadakka/zwaifu-launcher\n\n")
+        about_text.insert(tk.END, "If you encounter any issues or have feature requests, please open an issue on GitHub or contact the author directly.\n")
+        about_text.configure(state='disabled')
+        self.about_tab = about_tab # Assign for styling
+        self.style_widgets(about_tab, '#f0f0f0', '#000000', '#ffffff', '#000000') # Style about tab
+
+    def create_ollama_tab(self):
+        if not hasattr(self, 'process_instance_tabs'):
+            self.process_instance_tabs = {}
+        if 'Ollama' not in self.process_instance_tabs:
+            self.process_instance_tabs['Ollama'] = []
+
+        ollama_tab = ttk.Frame(self.notebook)
+        self.notebook.add(ollama_tab, text="Ollama")
+
+        # Batch file selection
+        ttk.Label(ollama_tab, text="Ollama batch:").pack(anchor=tk.W, padx=10, pady=(10,0))
+        self.ollama_path_var = tk.StringVar(value=self.ollama_bat if self.ollama_bat else "NOT FOUND")
+        ttk.Entry(ollama_tab, textvariable=self.ollama_path_var, state='readonly').pack(fill=tk.X, padx=10, expand=True)
+        ttk.Button(ollama_tab, text="Browse...", command=self.browse_ollama).pack(anchor=tk.E, padx=10, pady=(0,10))
+
+        # Launch new instance button
+        def launch_ollama_instance():
+            bat_path = self.ollama_path_var.get()
+            if not bat_path or not os.path.exists(bat_path):
+                self.log("Ollama batch file not set or does not exist.")
+                return
+            # Create a new tab for this instance
+            instance_tab = ttk.Frame(self.notebook)
+            self.notebook.add(instance_tab, text=f"Ollama Instance {len(self.process_instance_tabs['Ollama'])+1}")
+            tab_id = self.notebook.index('end') - 1
+            self.notebook.select(instance_tab)
+            self.flash_tab(tab_id, 'Ollama')
+            terminal = TerminalEmulator(instance_tab)
+            terminal.pack(fill=tk.BOTH, expand=True)
+            try:
+                proc = subprocess.Popen([bat_path], cwd=os.path.dirname(bat_path), shell=True,
+                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+                terminal.attach_process(proc, bat_path)
+                self.log(f"🚀 Ollama instance launched: {bat_path}")
+                self.set_status("✅ Ollama instance started successfully!", "green")
+                self.process_instance_tabs['Ollama'].append({'tab': instance_tab, 'terminal': terminal, 'proc': proc, 'bat_path': bat_path})
+            except Exception as e:
+                terminal._append(f"[ERROR] Failed to start Ollama: {e}\n", '31')
+                self.log(f"[ERROR] Failed to start Ollama: {e}")
+
+        ttk.Button(ollama_tab, text="Launch Ollama Instance", command=launch_ollama_instance).pack(padx=10, pady=(0, 10), anchor="w")
+        self.style_widgets(ollama_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
+        self.ollama_tab = ollama_tab
+
+    def create_rvc_tab(self):
+        if not hasattr(self, 'process_instance_tabs'):
+            self.process_instance_tabs = {}
+        if 'RVC' not in self.process_instance_tabs:
+            self.process_instance_tabs['RVC'] = []
+
+        rvc_tab = ttk.Frame(self.notebook)
+        self.notebook.add(rvc_tab, text="RVC")
+
+        # Batch file selection
+        ttk.Label(rvc_tab, text="RVC batch:").pack(anchor=tk.W, padx=10, pady=(10,0))
+        self.rvc_path_var = tk.StringVar(value=self.rvc_bat if self.rvc_bat else "NOT FOUND")
+        ttk.Entry(rvc_tab, textvariable=self.rvc_path_var, state='readonly').pack(fill=tk.X, padx=10, expand=True)
+        ttk.Button(rvc_tab, text="Browse...", command=self.browse_rvc).pack(anchor=tk.E, padx=10, pady=(0,10))
+
+        # Launch new instance button
+        def launch_rvc_instance():
+            bat_path = self.rvc_path_var.get()
+            if not bat_path or not os.path.exists(bat_path):
+                self.log("RVC batch file not set or does not exist.")
+                return
+            # Create a new tab for this instance
+            instance_tab = ttk.Frame(self.notebook)
+            self.notebook.add(instance_tab, text=f"RVC Instance {len(self.process_instance_tabs['RVC'])+1}")
+            tab_id = self.notebook.index('end') - 1
+            self.notebook.select(instance_tab)
+            self.flash_tab(tab_id, 'RVC')
+            terminal = TerminalEmulator(instance_tab)
+            terminal.pack(fill=tk.BOTH, expand=True)
+            try:
+                proc = subprocess.Popen([bat_path], cwd=os.path.dirname(bat_path), shell=True,
+                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+                terminal.attach_process(proc, bat_path)
+                self.log(f"🚀 RVC instance launched: {bat_path}")
+                self.set_status("✅ RVC instance started successfully!", "green")
+                self.process_instance_tabs['RVC'].append({'tab': instance_tab, 'terminal': terminal, 'proc': proc, 'bat_path': bat_path})
+            except Exception as e:
+                terminal._append(f"[ERROR] Failed to start RVC: {e}\n", '31')
+                self.log(f"[ERROR] Failed to start RVC: {e}")
+
+        ttk.Button(rvc_tab, text="Launch RVC Instance", command=launch_rvc_instance).pack(padx=10, pady=(0, 10), anchor="w")
+        self.style_widgets(rvc_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
+        self.rvc_tab = rvc_tab
+
+    def create_logs_tab(self):
+        logs_tab = ttk.Frame(self.notebook)
+        self.notebook.add(logs_tab, text="Logs")
+
+        # Log display
+        self.logs_text = scrolledtext.ScrolledText(logs_tab, state='disabled', font=("Consolas", 9))
+        self.logs_text.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+
+        # Log actions
+        actions_frame = ttk.Frame(logs_tab)
+        actions_frame.pack(padx=10, pady=(0,10), fill=tk.X)
+        
+        ttk.Button(actions_frame, text="Refresh", command=self.refresh_logs).pack(side=tk.LEFT, padx=(0,5))
+        ttk.Button(actions_frame, text="Clear", command=self.clear_logs).pack(side=tk.LEFT, padx=5)
+        ttk.Button(actions_frame, text="Open Log File", command=self.open_log_file).pack(side=tk.LEFT, padx=(5,0))
+
+        self.logs_tab = logs_tab
+        self.style_widgets(logs_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
+
+    def create_instance_manager_tab(self):
+        instance_tab = ttk.Frame(self.notebook)
+        self.notebook.add(instance_tab, text="Instance Manager")
+        
+        # Create scrollable frame for instance list
+        canvas = tk.Canvas(instance_tab)
+        scrollbar = ttk.Scrollbar(instance_tab, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Header
+        header_frame = ttk.Frame(scrollable_frame)
+        header_frame.pack(padx=10, pady=10, fill=tk.X)
+        
+        ttk.Label(header_frame, text="Instance Manager", font=("Arial", 14, "bold")).pack(anchor=tk.W)
+        ttk.Label(header_frame, text="Centralized management of all running process instances").pack(anchor=tk.W)
+        
+        # Control buttons
+        control_frame = ttk.Frame(scrollable_frame)
+        control_frame.pack(padx=10, pady=(0,10), fill=tk.X)
+        
+        self.kill_all_btn = ttk.Button(control_frame, text="Kill All Instances", command=self.kill_all_instances)
+        self.kill_all_btn.pack(side=tk.LEFT, padx=(0,5))
+        
+        self.refresh_btn = ttk.Button(control_frame, text="Refresh", command=self.refresh_instance_manager)
+        self.refresh_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Instance list
+        list_frame = ttk.LabelFrame(scrollable_frame, text="Running Instances")
+        list_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+        
+        # Create treeview for instances
+        columns = ('Process', 'Instance', 'Status', 'PID', 'Uptime', 'CPU %', 'Memory %')
+        self.instance_tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=15)
+        
+        # Configure columns
+        for col in columns:
+            self.instance_tree.heading(col, text=col)
+            self.instance_tree.column(col, width=100, minwidth=80)
+        
+        # Add scrollbar to treeview
+        tree_scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.instance_tree.yview)
+        self.instance_tree.configure(yscrollcommand=tree_scrollbar.set)
+        
+        self.instance_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Bind double-click to focus terminal
+        self.instance_tree.bind('<Double-1>', self.focus_instance_terminal)
+        
+        # Instance controls
+        instance_control_frame = ttk.Frame(scrollable_frame)
+        instance_control_frame.pack(padx=10, pady=(0,10), fill=tk.X)
+        
+        ttk.Button(instance_control_frame, text="Stop Selected", 
+                  command=self.stop_selected_instance).pack(side=tk.LEFT, padx=(0,5))
+        ttk.Button(instance_control_frame, text="Restart Selected", 
+                  command=self.restart_selected_instance).pack(side=tk.LEFT, padx=5)
+        ttk.Button(instance_control_frame, text="Kill Selected", 
+                  command=self.kill_selected_instance).pack(side=tk.LEFT, padx=5)
+        
+        # Pack canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        self.instance_manager_tab = instance_tab
+        self.style_widgets(instance_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
+        
+        # Initialize instance tracking
+        if not hasattr(self, 'process_instance_tabs'):
+            self.process_instance_tabs = {}
+        
+        # Update instance list
+        self.update_instance_manager()
+
+    def create_ooba_tab(self):
+        ooba_tab = ttk.Frame(self.notebook)
+        self.notebook.add(ooba_tab, text="Oobabooga")
+        
+        # Title and description
+        title_frame = ttk.Frame(ooba_tab)
+        title_frame.pack(fill=tk.X, padx=10, pady=(10,5))
+        ttk.Label(title_frame, text="Oobabooga Instance Management", font=("Arial", 12, "bold")).pack(anchor=tk.W)
+        ttk.Label(title_frame, text="Manage Oobabooga text generation web UI instances", font=("Arial", 9)).pack(anchor=tk.W)
+        
+        # Status frame
+        status_frame = ttk.LabelFrame(ooba_tab, text="Status")
+        status_frame.pack(padx=10, pady=5, fill=tk.X)
+        
+        self.ooba_status_var = tk.StringVar(value="No instances running")
+        ttk.Label(status_frame, textvariable=self.ooba_status_var, font=("Arial", 10)).pack(padx=5, pady=5)
+        
+        # Control buttons
+        control_frame = ttk.Frame(ooba_tab)
+        control_frame.pack(padx=10, pady=5, fill=tk.X)
+        
+        ttk.Button(control_frame, text="Start Instance", command=lambda: self.start_process_instance("oobabooga")).pack(side=tk.LEFT, padx=(0,5))
+        ttk.Button(control_frame, text="Stop All", command=lambda: self.stop_all_instances("oobabooga")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(control_frame, text="Refresh Status", command=self.refresh_ooba_status).pack(side=tk.LEFT, padx=5)
+        
+        # Information frame
+        info_frame = ttk.LabelFrame(ooba_tab, text="Information")
+        info_frame.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+        
+        info_text = """Oobabooga Text Generation WebUI
+
+This tab manages Oobabooga instances for text generation.
+
+Features:
+• Start/stop Oobabooga instances
+• Monitor instance status
+• View running processes
+• Manage multiple instances
+
+To get started:
+1. Ensure Oobabooga is properly installed
+2. Set the batch file path in Settings
+3. Click 'Start Instance' to launch
+
+Default port: 7860 (configurable in Settings)
+
+For more information, visit:
+https://github.com/oobabooga/text-generation-webui"""
+        
+        info_label = ttk.Label(info_frame, text=info_text, justify=tk.LEFT, wraplength=500)
+        info_label.pack(padx=10, pady=10, anchor=tk.NW)
+        
+        self.ooba_tab = ooba_tab
+        self.style_widgets(ooba_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
+        
+        # Initialize status
+        self.refresh_ooba_status()
+        
+        # Ensure process instance tabs are initialized
+        if not hasattr(self, 'process_instance_tabs'):
+            self.process_instance_tabs = {'Oobabooga': [], 'Z-Waifu': []}
+
+    def create_zwaifu_tab(self):
+        zwaifu_tab = ttk.Frame(self.notebook)
+        self.notebook.add(zwaifu_tab, text="Z-Waifu")
+        
+        # Title and description
+        title_frame = ttk.Frame(zwaifu_tab)
+        title_frame.pack(fill=tk.X, padx=10, pady=(10,5))
+        ttk.Label(title_frame, text="Z-Waifu Instance Management", font=("Arial", 12, "bold")).pack(anchor=tk.W)
+        ttk.Label(title_frame, text="Manage Z-Waifu AI companion instances", font=("Arial", 9)).pack(anchor=tk.W)
+        
+        # Status frame
+        status_frame = ttk.LabelFrame(zwaifu_tab, text="Status")
+        status_frame.pack(padx=10, pady=5, fill=tk.X)
+        
+        self.zwaifu_status_var = tk.StringVar(value="No instances running")
+        ttk.Label(status_frame, textvariable=self.zwaifu_status_var, font=("Arial", 10)).pack(padx=5, pady=5)
+        
+        # Control buttons
+        control_frame = ttk.Frame(zwaifu_tab)
+        control_frame.pack(padx=10, pady=5, fill=tk.X)
+        
+        ttk.Button(control_frame, text="Start Instance", command=lambda: self.start_process_instance("zwaifu")).pack(side=tk.LEFT, padx=(0,5))
+        ttk.Button(control_frame, text="Stop All", command=lambda: self.stop_all_instances("zwaifu")).pack(side=tk.LEFT, padx=5)
+        ttk.Button(control_frame, text="Refresh Status", command=self.refresh_zwaifu_status).pack(side=tk.LEFT, padx=5)
+        
+        # Information frame
+        info_frame = ttk.LabelFrame(zwaifu_tab, text="Information")
+        info_frame.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+        
+        info_text = """Z-Waifu AI Companion
+
+This tab manages Z-Waifu AI companion instances.
+
+Features:
+• Start/stop Z-Waifu instances
+• Monitor instance status
+• View running processes
+• Manage multiple instances
+• AI companion interaction
+
+To get started:
+1. Ensure Z-Waifu is properly installed
+2. Set the batch file path in Settings
+3. Configure Oobabooga connection
+4. Click 'Start Instance' to launch
+
+Default port: 5000 (configurable in Settings)
+
+Z-Waifu provides:
+• AI companion conversations
+• Voice interaction
+• Character customization
+• Memory and relationship systems
+
+For more information, check the Z-Waifu documentation."""
+        
+        info_label = ttk.Label(info_frame, text=info_text, justify=tk.LEFT, wraplength=500)
+        info_label.pack(padx=10, pady=10, anchor=tk.NW)
+        
+        self.zwaifu_tab = zwaifu_tab
+        self.style_widgets(zwaifu_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
+        
+        # Initialize status
+        self.refresh_zwaifu_status()
+        
+        # Ensure process instance tabs are initialized
+        if not hasattr(self, 'process_instance_tabs'):
+            self.process_instance_tabs = {'Oobabooga': [], 'Z-Waifu': []}
+
+    def create_advanced_features_tab(self):
+        advanced_tab = ttk.Frame(self.notebook)
+        self.notebook.add(advanced_tab, text="Advanced")
+        
+        # Create scrollable frame for advanced features
+        canvas = tk.Canvas(advanced_tab)
+        scrollbar = ttk.Scrollbar(advanced_tab, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Web Interface Section
+        web_frame = ttk.LabelFrame(scrollable_frame, text="Web Interface")
+        web_frame.pack(padx=10, pady=10, fill=tk.X)
+        
+        ttk.Label(web_frame, text="Browser-based management interface").pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Label(web_frame, text=f"Access from: http://localhost:{WEB_PORT}").pack(anchor=tk.W, padx=5, pady=2)
+        
+        web_btn_frame = ttk.Frame(web_frame)
+        web_btn_frame.pack(padx=5, pady=5, fill=tk.X)
+        
+        self.web_start_btn = ttk.Button(web_btn_frame, text="Start Web Interface", command=self.start_web_interface)
+        self.web_start_btn.pack(side=tk.LEFT, padx=(0,5))
+        
+        self.web_stop_btn = ttk.Button(web_btn_frame, text="Stop Web Interface", command=self.stop_web_interface, state='disabled')
+        self.web_stop_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.web_open_btn = ttk.Button(web_btn_frame, text="Open in Browser", command=self.open_web_interface)
+        self.web_open_btn.pack(side=tk.LEFT, padx=5)
+        
+        # API Server Section
+        api_frame = ttk.LabelFrame(scrollable_frame, text="REST API Server")
+        api_frame.pack(padx=10, pady=10, fill=tk.X)
+        
+        ttk.Label(api_frame, text="Programmatic access via REST API").pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Label(api_frame, text=f"API endpoint: http://localhost:{API_PORT}/api").pack(anchor=tk.W, padx=5, pady=2)
+        
+        api_btn_frame = ttk.Frame(api_frame)
+        api_btn_frame.pack(padx=5, pady=5, fill=tk.X)
+        
+        self.api_start_btn = ttk.Button(api_btn_frame, text="Start API Server", command=self.start_api_server)
+        self.api_start_btn.pack(side=tk.LEFT, padx=(0,5))
+        
+        self.api_stop_btn = ttk.Button(api_btn_frame, text="Stop API Server", command=self.stop_api_server, state='disabled')
+        self.api_stop_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.api_key_btn = ttk.Button(api_btn_frame, text="Generate API Key", command=self.generate_api_key)
+        self.api_key_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Mobile Support Section
+        mobile_frame = ttk.LabelFrame(scrollable_frame, text="Mobile Support")
+        mobile_frame.pack(padx=10, pady=10, fill=tk.X)
+        
+        ttk.Label(mobile_frame, text="Mobile-optimized interface").pack(anchor=tk.W, padx=5, pady=2)
+        ttk.Label(mobile_frame, text=f"Mobile access: http://localhost:{MOBILE_PORT}").pack(anchor=tk.W, padx=5, pady=2)
+        
+        mobile_btn_frame = ttk.Frame(mobile_frame)
+        mobile_btn_frame.pack(padx=5, pady=5, fill=tk.X)
+        
+        self.mobile_start_btn = ttk.Button(mobile_btn_frame, text="Start Mobile App", command=self.start_mobile_app)
+        self.mobile_start_btn.pack(side=tk.LEFT, padx=(0,5))
+        
+        self.mobile_stop_btn = ttk.Button(mobile_btn_frame, text="Stop Mobile App", command=self.stop_mobile_app, state='disabled')
+        self.mobile_stop_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.mobile_qr_btn = ttk.Button(mobile_btn_frame, text="Show QR Code", command=self.show_mobile_qr)
+        self.mobile_qr_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Analytics Section
+        analytics_frame = ttk.LabelFrame(scrollable_frame, text="Analytics & Monitoring")
+        analytics_frame.pack(padx=10, pady=10, fill=tk.X)
+        
+        ttk.Label(analytics_frame, text="Performance monitoring and analytics").pack(anchor=tk.W, padx=5, pady=2)
+        
+        analytics_btn_frame = ttk.Frame(analytics_frame)
+        analytics_btn_frame.pack(padx=5, pady=5, fill=tk.X)
+        
+        self.analytics_view_btn = ttk.Button(analytics_btn_frame, text="View Analytics", command=self.view_analytics)
+        self.analytics_view_btn.pack(side=tk.LEFT, padx=(0,5))
+        
+        self.analytics_report_btn = ttk.Button(analytics_btn_frame, text="Generate Report", command=self.generate_analytics_report)
+        self.analytics_report_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.analytics_export_btn = ttk.Button(analytics_btn_frame, text="Export Data", command=self.export_analytics)
+        self.analytics_export_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Plugin System Section
+        plugin_frame = ttk.LabelFrame(scrollable_frame, text="Plugin System")
+        plugin_frame.pack(padx=10, pady=10, fill=tk.X)
+        
+        ttk.Label(plugin_frame, text="Extensible plugin architecture").pack(anchor=tk.W, padx=5, pady=2)
+        
+        plugin_btn_frame = ttk.Frame(plugin_frame)
+        plugin_btn_frame.pack(padx=5, pady=5, fill=tk.X)
+        
+        self.plugin_manage_btn = ttk.Button(plugin_btn_frame, text="Manage Plugins", command=self.manage_plugins)
+        self.plugin_manage_btn.pack(side=tk.LEFT, padx=(0,5))
+        
+        self.plugin_create_btn = ttk.Button(plugin_btn_frame, text="Create Plugin", command=self.create_plugin)
+        self.plugin_create_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.plugin_reload_btn = ttk.Button(plugin_btn_frame, text="Reload Plugins", command=self.reload_plugins)
+        self.plugin_reload_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Status Section
+        status_frame = ttk.LabelFrame(scrollable_frame, text="Advanced Features Status")
+        status_frame.pack(padx=10, pady=10, fill=tk.X)
+        
+        self.advanced_status_text = scrolledtext.ScrolledText(status_frame, height=6, font=("Consolas", 9))
+        self.advanced_status_text.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
+        
+        # Pack canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        self.advanced_features_tab = advanced_tab
+        self.style_widgets(advanced_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
+        
+        # Update status
+        self.update_advanced_status()
+
+    def initialize_advanced_features(self):
+        """Initialize advanced features if available"""
+        try:
+            # Initialize analytics system
+            if MATPLOTLIB_AVAILABLE:
+                self.analytics = AnalyticsSystem(self)
+                self.log("Analytics system initialized")
+            
+            # Initialize plugin manager
+            self.plugin_manager = PluginManager(self)
+            self.log("Plugin manager initialized")
+            
+            # Start periodic analytics collection
+            if self.analytics:
+                self.root.after(30000, self.collect_analytics)  # Every 30 seconds
+            
+            self.log("Advanced features initialized successfully")
+        except Exception as e:
+            self.log(f"Failed to initialize advanced features: {e}")
+
+    def collect_analytics(self):
+        """Collect system and process analytics"""
+        if not self.analytics:
+            return
+        
+        try:
+            # Collect system metrics
+            cpu_percent = psutil.cpu_percent()
+            memory = psutil.virtual_memory()
+            disk = psutil.disk_usage('/')
+            
+            self.analytics.record_system_metrics(
+                cpu_percent, 
+                memory.percent, 
+                disk.percent
+            )
+            
+            # Collect process metrics
+            if hasattr(self, 'ooba_proc') and self.ooba_proc and self.ooba_proc.poll() is None:
+                try:
+                    process = psutil.Process(self.ooba_proc.pid)
+                    self.analytics.record_process_metrics(
+                        'Oobabooga',
+                        process.cpu_percent(),
+                        process.memory_percent()
+                    )
+                except:
+                    pass
+            
+            if hasattr(self, 'zwaifu_proc') and self.zwaifu_proc and self.zwaifu_proc.poll() is None:
+                try:
+                    process = psutil.Process(self.zwaifu_proc.pid)
+                    self.analytics.record_process_metrics(
+                        'Z-Waifu',
+                        process.cpu_percent(),
+                        process.memory_percent()
+                    )
+                except:
+                    pass
+            
+            # Schedule next collection
+            self.root.after(30000, self.collect_analytics)
+        except Exception as e:
+            self.log(f"Failed to collect analytics: {e}")
+
+    def toggle_theme(self):
+        """Toggle between light and dark themes, update emoji and button style."""
+        if self._dark_mode:
+            self.set_light_mode()
+            self._dark_mode = False
+        else:
+            self.set_dark_mode()
+            self._dark_mode = True
+        
+        # Update theme toggle button appearance
+        self._update_theme_button()
+        
+        # Save theme preference to config
+        self.current_theme = 'dark' if self._dark_mode else 'light'
+        self.save_config()
+    
+    def _update_theme_button(self):
+        """Update theme toggle button appearance based on current theme"""
+        if hasattr(self, 'theme_toggle_btn'):
+            if self._dark_mode:
+                self.theme_toggle_btn.config(
+                    text="☀️",
+                    bg="#222222", activebackground="#333333",
+                    fg="#ffffff", activeforeground="#ffffff",
+                    relief=tk.RAISED, bd=1
+                )
+            else:
+                self.theme_toggle_btn.config(
+                    text="🌙",
+                    bg="#f0f0f0", activebackground="#e0e0e0",
+                    fg="#000000", activeforeground="#000000",
+                    relief=tk.RAISED, bd=1
+                )
+
+    def stop_all_processes(self):
+        """Stop all running processes with proper thread synchronization"""
+        # Set stop flag to prevent new processes from starting
+        with self._stop_lock:
+            self._stop_requested = True
+        
+        # Wait a brief moment to ensure any launching processes see the stop flag
+        time.sleep(0.1)
+        
+        # Safely stop processes with thread synchronization
+        with self._process_lock:
+            if hasattr(self, 'ooba_proc') and self.ooba_proc and self.ooba_proc.poll() is None:
+                try:
+                    self.ooba_proc.kill()
+                    self.ooba_proc.wait(timeout=5)  # Wait up to 5 seconds for graceful shutdown
+                except subprocess.TimeoutExpired:
+                    self.ooba_proc.terminate()  # Force terminate if kill doesn't work
+                    try:
+                        self.ooba_proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        pass  # Process will be cleaned up by OS
+                except Exception as e:
+                    self.log(f"Error stopping Oobabooga process: {e}")
+            
+            if hasattr(self, 'zwaifu_proc') and self.zwaifu_proc and self.zwaifu_proc.poll() is None:
+                try:
+                    self.zwaifu_proc.kill()
+                    self.zwaifu_proc.wait(timeout=5)  # Wait up to 5 seconds for graceful shutdown
+                except subprocess.TimeoutExpired:
+                    self.zwaifu_proc.terminate()  # Force terminate if kill doesn't work
+                    try:
+                        self.zwaifu_proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        pass  # Process will be cleaned up by OS
+                except Exception as e:
+                    self.log(f"Error stopping Z-Waifu process: {e}")
+        
+        # Update UI state
+        self.start_btn.config(state='normal')
+        self.stop_all_btn.config(state='disabled')
+        self.set_status("All processes stopped", "red")
+        self.log("All processes stopped by user")
+
+    def launch_main_program(self):
+        """Launch the main Z-Waifu program and capture output"""
+        if not self.zwaifu_bat or not os.path.exists(self.zwaifu_bat):
+            messagebox.showerror("Error", "Z-Waifu batch file not set! Please browse and select it in Settings.")
+            return
+        
+        try:
+            # Clear previous output
+            self.main_program_output.configure(state='normal')
+            self.main_program_output.delete('1.0', tk.END)
+            self.main_program_output.configure(state='disabled')
+            
+            # Launch the main program
+            self.log("Launching main Z-Waifu program...")
+            
+            # Start the process with output capture
+            self.main_proc = subprocess.Popen(
+                [self.zwaifu_bat],
+                cwd=os.path.dirname(self.zwaifu_bat),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                universal_newlines=True
+            )
+            
+            # Start output capture thread
+            threading.Thread(target=self._capture_main_output, daemon=True).start()
+            
+            self.log("Main program started successfully")
+            self.set_status("Main program running", "green")
+            
+        except Exception as e:
+            error_msg = f"Failed to launch main program: {e}"
+            self.log(error_msg)
+            messagebox.showerror("Error", error_msg)
+            self.set_status("Main program failed to start", "red")
+    
+    def _capture_main_output(self):
+        """Capture and display main program output"""
+        try:
+            for line in iter(self.main_proc.stdout.readline, ''):
+                if line:
+                    # Update GUI in main thread
+                    self.root.after(0, self._append_main_output, line)
+        except Exception as e:
+            self.root.after(0, lambda: self.log(f"Output capture error: {e}"))
+    
+    def _append_main_output(self, text):
+        """Append text to main program output (called from main thread)"""
+        try:
+            self.main_program_output.configure(state='normal')
+            self.main_program_output.insert(tk.END, text)
+            self.main_program_output.see(tk.END)
+            self.main_program_output.configure(state='disabled')
+        except Exception as e:
+            self.log(f"Error appending output: {e}")
+
+    def add_demo_buttons(self):
+        """Add demo buttons to main tab"""
+        demo_frame = ttk.Frame(self.main_tab)
+        demo_frame.pack(padx=10, pady=(0,10), fill=tk.X)
+        ttk.Button(demo_frame, text="Demo Button 1").pack(side=tk.LEFT, padx=(0,5))
+        ttk.Button(demo_frame, text="Demo Button 2").pack(side=tk.LEFT, padx=5)
+
+    def update_process_status(self):
+        """Update process status periodically"""
+        # Update main process status
+        if hasattr(self, 'ooba_proc') and self.ooba_proc:
+            if self.ooba_proc.poll() is not None:
+                self.set_status("Oobabooga process stopped", "red")
+        
+        if hasattr(self, 'zwaifu_proc') and self.zwaifu_proc:
+            if self.zwaifu_proc.poll() is not None:
+                self.set_status("Z-Waifu process stopped", "red")
+        
+        # Schedule next update
+        self.root.after(1000, self.update_process_status)
+
+    def update_instance_manager(self):
+        """Update instance manager periodically"""
+        if hasattr(self, 'instance_tree'):
+            # Clear existing items
+            for item in self.instance_tree.get_children():
+                self.instance_tree.delete(item)
+            
+            # Add instances to treeview
+            for process_type in self.process_instance_tabs:
+                instances = self.process_instance_tabs[process_type]
+                for i, instance in enumerate(instances):
+                    if instance['proc']:
+                        # Get process status
+                        status = "Running" if instance['proc'].poll() is None else "Stopped"
+                        pid = instance['proc'].pid if instance['proc'].poll() is None else "N/A"
+                        
+                        # Get uptime
+                        uptime = "N/A"
+                        if hasattr(instance['terminal'], 'get_uptime'):
+                            uptime_seconds = instance['terminal'].get_uptime()
+                            if uptime_seconds > 0:
+                                hours = int(uptime_seconds // 3600)
+                                minutes = int((uptime_seconds % 3600) // 60)
+                                seconds = int(uptime_seconds % 60)
+                                uptime = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                        
+                        # Get CPU and memory usage
+                        cpu_percent = "N/A"
+                        memory_percent = "N/A"
+                        if instance['proc'].poll() is None:
+                            try:
+                                psutil_process = psutil.Process(instance['proc'].pid)
+                                cpu_percent = f"{psutil_process.cpu_percent():.1f}"
+                                memory_percent = f"{psutil_process.memory_percent():.1f}"
+                            except:
+                                pass
+                        
+                        # Insert into treeview
+                        self.instance_tree.insert('', 'end', values=(
+                            process_type,
+                            f"Instance {i+1}",
+                            status,
+                            pid,
+                            uptime,
+                            cpu_percent,
+                            memory_percent
+                        ))
+        
+        # Schedule next update
+        self.root.after(5000, self.update_instance_manager)  # Update every 5 seconds
+
+    def flash_tab(self, tab_id, process_type):
+        """Flash a tab to indicate process activity"""
+        try:
+            # Get the tab widget
+            tab_widget = self.notebook.tabs()[tab_id]
+            
+            # Store original background
+            original_bg = self.notebook.tab(tab_widget, "text")
+            
+            # Flash effect - change text color briefly
+            def flash_effect():
+                self.notebook.tab(tab_widget, text=f"⚡ {original_bg}")
+                self.root.after(500, lambda: self.notebook.tab(tab_widget, text=original_bg))
+            
+            flash_effect()
+        except Exception as e:
+            self.log(f"Failed to flash tab: {e}")
+
+    def browse_ollama(self):
+        """Browse for Ollama batch file"""
+        path = filedialog.askopenfilename(title="Select Ollama batch file", filetypes=[("Batch files", "*.bat")], initialdir=getattr(self, 'last_dir', os.getcwd()))
+        if path:
+            self.ollama_bat = path
+            self.ollama_path_var.set(path)
+            self.last_dir = os.path.dirname(path)
+            self.save_config()
+            self.log(f"Selected Ollama batch: {path}")
+
+    def browse_rvc(self):
+        """Browse for RVC batch file"""
+        path = filedialog.askopenfilename(title="Select RVC batch file", filetypes=[("Batch files", "*.bat")], initialdir=getattr(self, 'last_dir', os.getcwd()))
+        if path:
+            self.rvc_bat = path
+            self.rvc_path_var.set(path)
+            self.last_dir = os.path.dirname(path)
+            self.save_config()
+            self.log(f"Selected RVC batch: {path}")
+
+    def auto_detect_batch_files(self):
+        """Auto-detect batch files in the project"""
+        # Auto-detect Oobabooga
+        if not self.ooba_bat:
+            ooba_path = find_batch_file("start_windows.bat")
+            if ooba_path:
+                self.ooba_bat = ooba_path
+                self.log(f"Auto-detected Oobabooga: {ooba_path}")
+
+        # Auto-detect Z-Waifu
+        if not self.zwaifu_bat:
+            zwaifu_path = find_batch_file("startup.bat")
+            if zwaifu_path:
+                self.zwaifu_bat = zwaifu_path
+                self.log(f"Auto-detected Z-Waifu: {zwaifu_path}")
+
+        # Auto-detect Ollama
+        if not self.ollama_bat:
+            ollama_path = find_batch_file("ollama.bat")
+            if ollama_path:
+                self.ollama_bat = ollama_path
+                self.log(f"Auto-detected Ollama: {ollama_path}")
+
+        # Auto-detect RVC
+        if not self.rvc_bat:
+            rvc_path = find_batch_file("rvc.bat")
+            if rvc_path:
+                self.rvc_bat = rvc_path
+                self.log(f"Auto-detected RVC: {rvc_path}")
+
+    def refresh_logs(self):
+        """Refresh the logs display"""
+        try:
+            with open(LOG_FILE, "r") as f:
+                logs = f.read()
+            self.logs_text.configure(state='normal')
+            self.logs_text.delete('1.0', tk.END)
+            self.logs_text.insert(tk.END, logs)
+            self.logs_text.see(tk.END)
+            self.logs_text.configure(state='disabled')
+        except Exception as e:
+            self.log(f"Error refreshing logs: {e}")
+
+    def clear_logs(self):
+        """Clear the logs"""
+        try:
+            with open(LOG_FILE, "w") as f:
+                f.write("")
+            self.logs_text.configure(state='normal')
+            self.logs_text.delete('1.0', tk.END)
+            self.logs_text.configure(state='disabled')
+            self.log("Logs cleared")
+        except Exception as e:
+            self.log(f"Error clearing logs: {e}")
+
+    def open_log_file(self):
+        """Open the log file in default editor"""
+        try:
+            if os.path.exists(LOG_FILE):
+                os.startfile(LOG_FILE)
+            else:
+                self.log("Log file does not exist")
+        except Exception as e:
+            self.log(f"Error opening log file: {e}")
+
+    def on_close(self):
+        """Handle window close event"""
+        self.stop_all_processes()
+        self.save_config()
+        self.root.destroy()
+
+    # Advanced Features Methods
+    def start_web_interface(self):
+        """Start the web interface"""
+        if not self.web_interface:
+            self.web_interface = WebInterface(self)
+        
+        if self.web_interface.start():
+            self.web_start_btn.config(state='disabled')
+            self.web_stop_btn.config(state='normal')
+            self.web_open_btn.config(state='normal')
+            self.log("Web interface started successfully")
+            self.update_advanced_status()
+        else:
+            messagebox.showerror("Error", "Failed to start web interface")
+
+    def stop_web_interface(self):
+        """Stop the web interface"""
+        if self.web_interface and self.web_interface.is_running:
+            # Note: Flask-SocketIO doesn't have a clean shutdown method
+            # The server will stop when the main application exits
+            self.web_interface.is_running = False
+            self.web_start_btn.config(state='normal')
+            self.web_stop_btn.config(state='disabled')
+            self.web_open_btn.config(state='disabled')
+            self.log("Web interface stopped")
+            self.update_advanced_status()
+
+    def open_web_interface(self):
+        """Open web interface in browser"""
+        try:
+            webbrowser.open(f"http://localhost:{WEB_PORT}")
+        except Exception as e:
+            self.log(f"Failed to open web interface: {e}")
+
+    def start_api_server(self):
+        """Start the API server"""
+        if not self.api_server:
+            self.api_server = APIServer(self)
+        
+        if self.api_server.start():
+            self.api_start_btn.config(state='disabled')
+            self.api_stop_btn.config(state='normal')
+            self.api_key_btn.config(state='normal')
+            self.log("API server started successfully")
+            self.update_advanced_status()
+        else:
+            messagebox.showerror("Error", "Failed to start API server")
+
+    def stop_api_server(self):
+        """Stop the API server"""
+        if self.api_server and self.api_server.is_running:
+            self.api_server.is_running = False
+            self.api_start_btn.config(state='normal')
+            self.api_stop_btn.config(state='disabled')
+            self.api_key_btn.config(state='disabled')
+            self.log("API server stopped")
+            self.update_advanced_status()
+
+    def generate_api_key(self):
+        """Generate a new API key"""
+        if self.api_server:
+            try:
+                key = secrets.token_hex(32)
+                self.api_server.api_keys[key] = {'created': time.time(), 'permissions': ['read', 'write']}
+                messagebox.showinfo("API Key Generated", f"Your new API key:\n\n{key}\n\nKeep this key secure!")
+                self.log("API key generated successfully")
+            except Exception as e:
+                self.log(f"Failed to generate API key: {e}")
+
+    def start_mobile_app(self):
+        """Start the mobile app"""
+        if not self.mobile_app:
+            self.mobile_app = MobileApp(self)
+        
+        if self.mobile_app.start():
+            self.mobile_start_btn.config(state='disabled')
+            self.mobile_stop_btn.config(state='normal')
+            self.mobile_qr_btn.config(state='normal')
+            self.log("Mobile app started successfully")
+            self.update_advanced_status()
+        else:
+            messagebox.showerror("Error", "Failed to start mobile app")
+
+    def stop_mobile_app(self):
+        """Stop the mobile app"""
+        if self.mobile_app and self.mobile_app.is_running:
+            self.mobile_app.is_running = False
+            self.mobile_start_btn.config(state='normal')
+            self.mobile_stop_btn.config(state='disabled')
+            self.mobile_qr_btn.config(state='disabled')
+            self.log("Mobile app stopped")
+            self.update_advanced_status()
+
+    def show_mobile_qr(self):
+        """Show mobile QR code"""
+        if self.mobile_app and self.mobile_app.qr_code and os.path.exists(self.mobile_app.qr_code):
+            try:
+                os.startfile(self.mobile_app.qr_code)
+                self.log("Mobile QR code opened")
+            except Exception as e:
+                self.log(f"Failed to open QR code: {e}")
+        else:
+            messagebox.showinfo("QR Code", "QR code not available. Start the mobile app first.")
+
+    def view_analytics(self):
+        """View analytics dashboard"""
+        if not self.analytics:
+            messagebox.showinfo("Analytics", "Analytics system not available. Install matplotlib: pip install matplotlib")
+            return
+        
+        try:
+            # Create analytics window
+            analytics_window = tk.Toplevel(self.root)
+            analytics_window.title("Analytics Dashboard")
+            analytics_window.geometry("800x600")
+            
+            # Create notebook for different analytics views
+            notebook = ttk.Notebook(analytics_window)
+            notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            # System metrics tab
+            system_tab = ttk.Frame(notebook)
+            notebook.add(system_tab, text="System Metrics")
+            
+            if MATPLOTLIB_AVAILABLE:
+                # Create matplotlib figure
+                fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 8))
+                
+                # Get system metrics
+                system_data = self.analytics.get_system_metrics(24)
+                if system_data:
+                    timestamps = [row[3] for row in system_data]
+                    cpu_data = [row[0] for row in system_data]
+                    memory_data = [row[1] for row in system_data]
+                    disk_data = [row[2] for row in system_data]
+                    
+                    # Plot CPU usage
+                    ax1.plot(timestamps, cpu_data, 'b-', label='CPU %')
+                    ax1.set_ylabel('CPU Usage (%)')
+                    ax1.set_title('System Performance (Last 24 Hours)')
+                    ax1.legend()
+                    ax1.grid(True)
+                    
+                    # Plot memory usage
+                    ax2.plot(timestamps, memory_data, 'r-', label='Memory %')
+                    ax2.set_ylabel('Memory Usage (%)')
+                    ax2.legend()
+                    ax2.grid(True)
+                    
+                    # Plot disk usage
+                    ax3.plot(timestamps, disk_data, 'g-', label='Disk %')
+                    ax3.set_ylabel('Disk Usage (%)')
+                    ax3.set_xlabel('Time')
+                    ax3.legend()
+                    ax3.grid(True)
+                    
+                    plt.tight_layout()
+                    
+                    # Embed in tkinter
+                    canvas = FigureCanvasTkAgg(fig, system_tab)
+                    canvas.draw()
+                    canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+                else:
+                    ttk.Label(system_tab, text="No analytics data available").pack(pady=20)
+            else:
+                ttk.Label(system_tab, text="Matplotlib not available for charts").pack(pady=20)
+            
+            # Process metrics tab
+            process_tab = ttk.Frame(notebook)
+            notebook.add(process_tab, text="Process Metrics")
+            
+            process_text = scrolledtext.ScrolledText(process_tab, font=("Consolas", 9))
+            process_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            # Display process metrics
+            for process_name in ['Oobabooga', 'Z-Waifu']:
+                metrics = self.analytics.get_process_metrics(process_name, 24)
+                if metrics:
+                    process_text.insert(tk.END, f"\n{process_name} Metrics (Last 24 Hours):\n")
+                    process_text.insert(tk.END, f"Data points: {len(metrics)}\n")
+                    if metrics:
+                        avg_cpu = sum(row[0] for row in metrics) / len(metrics)
+                        avg_memory = sum(row[1] for row in metrics) / len(metrics)
+                        process_text.insert(tk.END, f"Average CPU: {avg_cpu:.2f}%\n")
+                        process_text.insert(tk.END, f"Average Memory: {avg_memory:.2f}%\n")
+                else:
+                    process_text.insert(tk.END, f"\n{process_name}: No data available\n")
+            
+            process_text.config(state='disabled')
+            
+        except Exception as e:
+            self.log(f"Failed to view analytics: {e}")
+            messagebox.showerror("Error", f"Failed to view analytics: {e}")
+
+    def generate_analytics_report(self):
+        """Generate analytics report"""
+        if not self.analytics:
+            messagebox.showinfo("Analytics", "Analytics system not available")
+            return
+        
+        try:
+            report = self.analytics.generate_report(24)
+            
+            # Create report window
+            report_window = tk.Toplevel(self.root)
+            report_window.title("Analytics Report")
+            report_window.geometry("600x400")
+            
+            report_text = scrolledtext.ScrolledText(report_window, font=("Consolas", 10))
+            report_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            report_text.insert(tk.END, report)
+            report_text.config(state='disabled')
+            
+            self.log("Analytics report generated")
+        except Exception as e:
+            self.log(f"Failed to generate report: {e}")
+            messagebox.showerror("Error", f"Failed to generate report: {e}")
+
+    def export_analytics(self):
+        """Export analytics data"""
+        if not self.analytics:
+            messagebox.showinfo("Analytics", "Analytics system not available")
+            return
+        
+        try:
+            # Get export path
+            export_path = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv"), ("JSON files", "*.json")]
+            )
+            
+            if export_path:
+                if export_path.endswith('.csv'):
+                    # Export as CSV
+                    import csv
+                    with open(export_path, 'w', newline='') as csvfile:
+                        writer = csv.writer(csvfile)
+                        writer.writerow(['Timestamp', 'CPU %', 'Memory %', 'Disk %'])
+                        
+                        system_data = self.analytics.get_system_metrics(24)
+                        for row in system_data:
+                            writer.writerow([row[3], row[0], row[1], row[2]])
+                
+                elif export_path.endswith('.json'):
+                    # Export as JSON
+                    system_data = self.analytics.get_system_metrics(24)
+                    export_data = {
+                        'system_metrics': [
+                            {
+                                'timestamp': row[3],
+                                'cpu_percent': row[0],
+                                'memory_percent': row[1],
+                                'disk_usage': row[2]
+                            }
+                            for row in system_data
+                        ]
+                    }
+                    
+                    with open(export_path, 'w') as jsonfile:
+                        json.dump(export_data, jsonfile, indent=2)
+                
+                self.log(f"Analytics data exported to: {export_path}")
+                messagebox.showinfo("Export Complete", f"Data exported to:\n{export_path}")
+        
+        except Exception as e:
+            self.log(f"Failed to export analytics: {e}")
+            messagebox.showerror("Error", f"Failed to export analytics: {e}")
+
+    def manage_plugins(self):
+        """Manage plugins"""
+        if not self.plugin_manager:
+            messagebox.showinfo("Plugins", "Plugin manager not available")
+            return
+        
+        try:
+            # Create plugin management window
+            plugin_window = tk.Toplevel(self.root)
+            plugin_window.title("Plugin Manager")
+            plugin_window.geometry("500x400")
+            
+            # Plugin list
+            list_frame = ttk.LabelFrame(plugin_window, text="Installed Plugins")
+            list_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+            
+            plugin_listbox = tk.Listbox(list_frame, font=("Consolas", 10))
+            plugin_listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            
+            # Populate plugin list
+            plugins = self.plugin_manager.get_plugin_list()
+            for plugin in plugins:
+                plugin_listbox.insert(tk.END, plugin)
+            
+            # Plugin controls
+            control_frame = ttk.Frame(plugin_window)
+            control_frame.pack(padx=10, pady=(0,10), fill=tk.X)
+            
+            ttk.Button(control_frame, text="Enable Plugin", 
+                      command=lambda: self.enable_selected_plugin(plugin_listbox)).pack(side=tk.LEFT, padx=(0,5))
+            ttk.Button(control_frame, text="Disable Plugin", 
+                      command=lambda: self.disable_selected_plugin(plugin_listbox)).pack(side=tk.LEFT, padx=5)
+            ttk.Button(control_frame, text="Create New Plugin", 
+                      command=self.create_plugin_dialog).pack(side=tk.LEFT, padx=5)
+            
+        except Exception as e:
+            self.log(f"Failed to manage plugins: {e}")
+            messagebox.showerror("Error", f"Failed to manage plugins: {e}")
+
+    def enable_selected_plugin(self, listbox):
+        """Enable selected plugin"""
+        selection = listbox.curselection()
+        if selection:
+            plugin_name = listbox.get(selection[0])
+            self.plugin_manager.enable_plugin(plugin_name)
+            self.log(f"Enabled plugin: {plugin_name}")
+
+    def disable_selected_plugin(self, listbox):
+        """Disable selected plugin"""
+        selection = listbox.curselection()
+        if selection:
+            plugin_name = listbox.get(selection[0])
+            self.plugin_manager.disable_plugin(plugin_name)
+            self.log(f"Disabled plugin: {plugin_name}")
+
+    def create_plugin(self):
+        """Create a new plugin"""
+        self.create_plugin_dialog()
+
+    def create_plugin_dialog(self):
+        """Create plugin dialog"""
+        try:
+            plugin_name = tk.simpledialog.askstring("Create Plugin", "Enter plugin name:")
+            if plugin_name:
+                if self.plugin_manager.create_plugin_template(plugin_name):
+                    messagebox.showinfo("Success", f"Plugin template created: {plugin_name}.py")
+                    self.log(f"Created plugin template: {plugin_name}")
+                else:
+                    messagebox.showerror("Error", "Failed to create plugin template")
+        except Exception as e:
+            self.log(f"Failed to create plugin: {e}")
+            messagebox.showerror("Error", f"Failed to create plugin: {e}")
+
+    def reload_plugins(self):
+        """Reload plugins"""
+        if self.plugin_manager:
+            self.plugin_manager.load_plugins()
+            self.log("Plugins reloaded")
+            messagebox.showinfo("Success", "Plugins reloaded successfully")
+
+    def update_advanced_status(self):
+        """Update advanced features status"""
+        if hasattr(self, 'advanced_status_text'):
+            self.advanced_status_text.config(state='normal')
+            self.advanced_status_text.delete('1.0', tk.END)
+            
+            status_lines = []
+            status_lines.append("Advanced Features Status:")
+            status_lines.append("=" * 30)
+            
+            # Web Interface status
+            web_status = "Running" if (self.web_interface and self.web_interface.is_running) else "Stopped"
+            status_lines.append(f"Web Interface: {web_status}")
+            
+            # API Server status
+            api_status = "Running" if (self.api_server and self.api_server.is_running) else "Stopped"
+            status_lines.append(f"API Server: {api_status}")
+            
+            # Mobile App status
+            mobile_status = "Running" if (self.mobile_app and self.mobile_app.is_running) else "Stopped"
+            status_lines.append(f"Mobile App: {mobile_status}")
+            
+            # Analytics status
+            analytics_status = "Available" if self.analytics else "Not Available"
+            status_lines.append(f"Analytics: {analytics_status}")
+            
+            # Plugin Manager status
+            plugin_status = "Available" if self.plugin_manager else "Not Available"
+            status_lines.append(f"Plugin Manager: {plugin_status}")
+            
+            if self.plugin_manager:
+                plugins = self.plugin_manager.get_plugin_list()
+                status_lines.append(f"Loaded Plugins: {len(plugins)}")
+                for plugin in plugins:
+                    status_lines.append(f"  - {plugin}")
+            
+            status_lines.append("")
+            status_lines.append("Dependencies:")
+            status_lines.append(f"  Flask: {'Available' if FLASK_AVAILABLE else 'Not Available'}")
+            status_lines.append(f"  Matplotlib: {'Available' if MATPLOTLIB_AVAILABLE else 'Not Available'}")
+            status_lines.append(f"  Requests: {'Available' if REQUESTS_AVAILABLE else 'Not Available'}")
+            status_lines.append(f"  QRCode: {'Available' if QRCODE_AVAILABLE else 'Not Available'}")
+            
+            self.advanced_status_text.insert(tk.END, '\n'.join(status_lines))
+            self.advanced_status_text.config(state='disabled')
+
+    def kill_all_instances(self):
+        """Kill all running instances of all processes reliably."""
+        killed_count = 0
+        for process_type in self.process_instance_tabs:
+            for instance in self.process_instance_tabs[process_type]:
+                proc = instance.get('proc')
+                if proc and proc.poll() is None:
+                    try:
+                        proc.kill()
+                        self.log(f"Killed {process_type} instance (PID {proc.pid})")
+                        killed_count += 1
+                    except Exception as e:
+                        self.log(f"Error killing {process_type} instance: {e}")
+                    finally:
+                        instance['proc'] = None  # Clean up reference
+        self.update_instance_manager()
+        self.log(f"Kill All: {killed_count} process(es) killed.")
+        self.set_status(f"Kill All: {killed_count} process(es) killed.", "red")
+
+    def refresh_instance_manager(self):
+        """Refresh the instance manager tab"""
+        self.update_instance_manager()
+
+    def focus_instance_terminal(self, event):
+        """Focus the terminal of the selected instance"""
+        selection = self.instance_tree.selection()
+        if selection:
+            instance = self.instance_tree.item(selection[0])['values']
+            self.focus_instance(instance[0], instance[1])
+
+    def stop_selected_instance(self):
+        """Stop the selected instance"""
+        selection = self.instance_tree.selection()
+        if selection:
+            instance = self.instance_tree.item(selection[0])['values']
+            self.stop_instance(instance[0], instance[1])
+
+    def restart_selected_instance(self):
+        """Restart the selected instance"""
+        selection = self.instance_tree.selection()
+        if selection:
+            instance = self.instance_tree.item(selection[0])['values']
+            self.restart_instance(instance[0], instance[1])
+
+    def kill_selected_instance(self):
+        """Kill the selected instance"""
+        selection = self.instance_tree.selection()
+        if selection:
+            instance = self.instance_tree.item(selection[0])['values']
+            self.kill_instance(instance[0], instance[1])
+
+    def stop_instance(self, process_name, instance_id):
+        """Stop a specific instance of a process"""
+        if process_name in self.process_instance_tabs:
+            instances = self.process_instance_tabs[process_name]
+            if instance_id < len(instances):
+                instance = instances[instance_id]
+                if instance['proc']:
+                    instance['proc'].terminate()
+                    self.log(f"Stopped {process_name} Instance {instance_id+1}")
+                    self.update_instance_manager()
+
+    def restart_instance(self, process_name, instance_id):
+        """Restart a specific instance of a process"""
+        if process_name in self.process_instance_tabs:
+            instances = self.process_instance_tabs[process_name]
+            if instance_id < len(instances):
+                instance = instances[instance_id]
+                if instance['proc']:
+                    instance['proc'].terminate()
+                    instance['proc'] = subprocess.Popen([instance['bat_path']], cwd=os.path.dirname(instance['bat_path']), shell=True)
+                    self.log(f"Restarted {process_name} Instance {instance_id+1}")
+                    self.update_instance_manager()
+
+    def kill_instance(self, process_name, instance_id):
+        """Kill a specific instance of a process"""
+        if process_name in self.process_instance_tabs:
+            instances = self.process_instance_tabs[process_name]
+            if instance_id < len(instances):
+                instance = instances[instance_id]
+                if instance['proc']:
+                    instance['proc'].kill()
+                    self.log(f"Killed {process_name} Instance {instance_id+1}")
+                    self.update_instance_manager()
+
+    def focus_instance(self, process_name, instance_id):
+        """Focus the terminal tab of a specific instance"""
+        try:
+            instance_id = int(instance_id.split()[-1]) - 1  # Convert "Instance X" to X-1
+            if process_name in self.process_instance_tabs:
+                instances = self.process_instance_tabs[process_name]
+                if instance_id < len(instances):
+                    # Find the tab index for this instance
+                    for i, tab in enumerate(self.notebook.tabs()):
+                        if self.notebook.tab(tab, "text") == f"{process_name} Instance {instance_id+1}":
+                            self.notebook.select(i)
+                            self.log(f"Focused {process_name} Instance {instance_id+1}")
+                            break
+        except Exception as e:
+            self.log(f"Failed to focus instance: {e}")
+
+    def refresh_ooba_status(self):
+        """Refresh Oobabooga status"""
+        if hasattr(self, 'ooba_status_var'):
+            # Count running instances
+            running_count = 0
+            if 'Oobabooga' in self.process_instance_tabs:
+                for instance in self.process_instance_tabs['Oobabooga']:
+                    if instance['proc'] and instance['proc'].poll() is None:
+                        running_count += 1
+            
+            if running_count > 0:
+                self.ooba_status_var.set(f"Running instances: {running_count}")
+            else:
+                self.ooba_status_var.set("No instances running")
+
+    def refresh_zwaifu_status(self):
+        """Refresh Z-Waifu status"""
+        if hasattr(self, 'zwaifu_status_var'):
+            # Count running instances
+            running_count = 0
+            if 'Z-Waifu' in self.process_instance_tabs:
+                for instance in self.process_instance_tabs['Z-Waifu']:
+                    if instance['proc'] and instance['proc'].poll() is None:
+                        running_count += 1
+            
+            if running_count > 0:
+                self.zwaifu_status_var.set(f"Running instances: {running_count}")
+            else:
+                self.zwaifu_status_var.set("No instances running")
+    
+    def stop_all_instances(self, process_type):
+        """Stop all instances of a specific process type"""
+        if process_type in self.process_instance_tabs:
+            stopped_count = 0
+            for instance in self.process_instance_tabs[process_type]:
+                if instance['proc'] and instance['proc'].poll() is None:
+                    try:
+                        instance['proc'].terminate()
+                        stopped_count += 1
+                    except Exception as e:
+                        self.log(f"Error stopping {process_type} instance: {e}")
+            
+            self.log(f"Stopped {stopped_count} {process_type} instances")
+            
+            # Refresh status
+            if process_type == "oobabooga":
+                self.refresh_ooba_status()
+            elif process_type == "zwaifu":
+                self.refresh_zwaifu_status()
+    
+    def start_process_instance(self, process_type):
+        """Start a new instance of the specified process type"""
+        try:
+            if process_type == "oobabooga":
+                if not self.ooba_bat or not os.path.exists(self.ooba_bat):
+                    messagebox.showerror("Error", "Oobabooga batch file not set! Please browse and select it in Settings.")
+                    return
+                
+                # Start Oobabooga process
+                proc = subprocess.Popen(
+                    [self.ooba_bat],
+                    cwd=os.path.dirname(self.ooba_bat),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True
+                )
+                
+                # Add to instances
+                if 'Oobabooga' not in self.process_instance_tabs:
+                    self.process_instance_tabs['Oobabooga'] = []
+                
+                self.process_instance_tabs['Oobabooga'].append({
+                    'proc': proc,
+                    'start_time': time.time()
+                })
+                
+                self.log(f"Started Oobabooga instance (PID: {proc.pid})")
+                self.refresh_ooba_status()
+                
+            elif process_type == "zwaifu":
+                if not self.zwaifu_bat or not os.path.exists(self.zwaifu_bat):
+                    messagebox.showerror("Error", "Z-Waifu batch file not set! Please browse and select it in Settings.")
+                    return
+                
+                # Start Z-Waifu process
+                proc = subprocess.Popen(
+                    [self.zwaifu_bat],
+                    cwd=os.path.dirname(self.zwaifu_bat),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True
+                )
+                
+                # Add to instances
+                if 'Z-Waifu' not in self.process_instance_tabs:
+                    self.process_instance_tabs['Z-Waifu'] = []
+                
+                self.process_instance_tabs['Z-Waifu'].append({
+                    'proc': proc,
+                    'start_time': time.time()
+                })
+                
+                self.log(f"Started Z-Waifu instance (PID: {proc.pid})")
+                self.refresh_zwaifu_status()
+                
+        except Exception as e:
+            error_msg = f"Failed to start {process_type} instance: {e}"
+            self.log(error_msg)
+            messagebox.showerror("Error", error_msg)
+
+# Terminal Emulator class for process output
+class TerminalEmulator(tk.Frame):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.parent = parent
+        self.process = None
+        self.start_time = None
+        self.command_history = []
+        self.history_index = 0
+        
+        # Create terminal display with ANSI color support
+        self.terminal = scrolledtext.ScrolledText(
+            self, 
+            font=("Consolas", 9), 
+            bg='black', 
+            fg='green',
+            insertbackground='white'
+        )
+        self.terminal.pack(fill=tk.BOTH, expand=True)
+        
+        # Bind keyboard events for command history
+        self.terminal.bind('<Key>', self.on_key_press)
+        
+        # Create input field
+        self.input_frame = tk.Frame(self)
+        self.input_frame.pack(fill=tk.X, side=tk.BOTTOM)
+        
+        self.input_var = tk.StringVar()
+        self.input_entry = tk.Entry(
+            self.input_frame, 
+            textvariable=self.input_var, 
+            bg='black', 
+            fg='green',
+            insertbackground='white',
+            font=("Consolas", 9)
+        )
+        self.input_entry.pack(fill=tk.X, side=tk.LEFT, expand=True)
+        self.input_entry.bind('<Return>', self.send_input)
+        self.input_entry.bind('<Up>', self.history_up)
+        self.input_entry.bind('<Down>', self.history_down)
+        
+        # Create control buttons
+        self.send_btn = tk.Button(self.input_frame, text="Send", command=self.send_input, bg='darkgreen', fg='white')
+        self.send_btn.pack(side=tk.RIGHT, padx=(5,0))
+        
+        self.clear_btn = tk.Button(self.input_frame, text="Clear", command=self.clear_terminal, bg='darkred', fg='white')
+        self.clear_btn.pack(side=tk.RIGHT, padx=(5,0))
+        
+        self.kill_btn = tk.Button(self.input_frame, text="Kill", command=self.kill_process, bg='red', fg='white')
+        self.kill_btn.pack(side=tk.RIGHT, padx=(5,0))
+
+    def attach_process(self, process, command):
+        """Attach a process to this terminal"""
+        self.process = process
+        self.start_time = time.time()
+        self._append(f"Process started: {command}\n", '32')  # Green
+        
+        # Start reading process output
+        threading.Thread(target=self._read_output, daemon=True).start()
+
+    def _read_output(self):
+        """Read process output in a separate thread with efficient memory management"""
+        try:
+            max_lines = 200  # Further reduced to prevent memory issues
+            line_count = 0
+            cleanup_threshold = max_lines * 0.5  # Start cleanup at 50% capacity
+            last_cleanup_time = time.time()
+            cleanup_interval = 0.3  # Cleanup more frequently
+            
+            for line in self.process.stdout:
+                # Check if process is still running
+                if self.process.poll() is not None:
+                    break
+                
+                # Append line with thread-safe operation
+                self.after(0, self._append, line, '37')  # White text
+                line_count += 1
+                
+                # Cleanup old lines to prevent memory issues
+                current_time = time.time()
+                if (line_count > cleanup_threshold and 
+                    current_time - last_cleanup_time > cleanup_interval):
+                    # Use a more aggressive cleanup approach
+                    lines_to_remove = max_lines // 2  # Remove 1/2 of lines
+                    self.after(0, self._cleanup_old_lines_efficient, lines_to_remove)
+                    line_count = max_lines // 2  # Reset counter
+                    last_cleanup_time = current_time
+                    
+                    # Force garbage collection
+                    import gc
+                    gc.collect()
+                    
+        except Exception as e:
+            self.after(0, self._append, f"Error reading output: {e}\n", '31')  # Red
+        finally:
+            # Mark process as terminated
+            self.after(0, self._append, "Process terminated\n", '33')  # Yellow
+
+    def _cleanup_old_lines(self, lines_to_remove):
+        """Remove old lines from terminal to prevent memory issues"""
+        try:
+            self.terminal.config(state='normal')
+            
+            # More efficient line counting using get() method
+            content = self.terminal.get('1.0', tk.END)
+            current_lines = content.count('\n')
+            
+            if current_lines > lines_to_remove:
+                # Find the position to delete from
+                lines_to_keep = current_lines - lines_to_remove
+                if lines_to_keep > 0:
+                    # Find the start of the line we want to keep
+                    start_pos = '1.0'
+                    for _ in range(lines_to_keep):
+                        start_pos = self.terminal.index(f"{start_pos}+1l")
+                    
+                    # Remove lines from beginning to start_pos
+                    self.terminal.delete('1.0', start_pos)
+            
+            self.terminal.config(state='disabled')
+        except Exception as e:
+            # If cleanup fails, just clear the terminal
+            self.clear_terminal()
+
+    def _cleanup_old_lines_efficient(self, lines_to_remove):
+        """Efficient cleanup method that prevents UI freezing"""
+        try:
+            self.terminal.config(state='normal')
+            
+            # Get current line count efficiently
+            current_lines = int(self.terminal.index('end-1c').split('.')[0])
+            
+            if current_lines > lines_to_remove:
+                # Calculate how many lines to keep
+                lines_to_keep = current_lines - lines_to_remove
+                
+                if lines_to_keep > 0:
+                    # Find the position to delete from using efficient indexing
+                    delete_to_line = lines_to_keep + 1
+                    delete_to_pos = f"{delete_to_line}.0"
+                    
+                    # Remove lines from beginning to delete_to_pos
+                    self.terminal.delete('1.0', delete_to_pos)
+                    
+                    # Force garbage collection to free memory
+                    import gc
+                    gc.collect()
+            
+            self.terminal.config(state='disabled')
+        except Exception as e:
+            # If cleanup fails, just clear the terminal
+            self.clear_terminal()
+
+    def _append(self, text, color_code):
+        """Append text to terminal with ANSI color support"""
+        self.terminal.config(state='normal')
+        
+        # Parse ANSI color codes
+        if '\033[' in text:
+            # Simple ANSI color parsing
+            text = self._parse_ansi_colors(text)
+        
+        self.terminal.insert(tk.END, text)
+        self.terminal.see(tk.END)
+        self.terminal.config(state='disabled')
+
+    def _parse_ansi_colors(self, text):
+        """Parse ANSI color codes and convert to tkinter colors"""
+        # Simple ANSI color mapping
+        color_map = {
+            '30': 'black',
+            '31': 'red',
+            '32': 'green',
+            '33': 'yellow',
+            '34': 'blue',
+            '35': 'magenta',
+            '36': 'cyan',
+            '37': 'white',
+            '0': 'white'  # Reset
+        }
+        
+        # Remove ANSI codes for now (can be enhanced with actual color support)
+        import re
+        text = re.sub(r'\033\[[0-9;]*m', '', text)
+        return text
+
+    def send_input(self, event=None):
+        """Send input to the process"""
+        if self.process and self.process.poll() is None:
+            input_text = self.input_var.get()
+            if input_text.strip():
+                # Add to command history
+                self.command_history.append(input_text)
+                self.history_index = len(self.command_history)
+                
+                # Send to process
+                try:
+                    self.process.stdin.write(input_text + '\n')
+                    self.process.stdin.flush()
+                    self._append(f"> {input_text}\n", '36')  # Cyan text
+                    self.input_var.set("")
+                except Exception as e:
+                    self._append(f"Error sending input: {e}\n", '31')  # Red
+
+    def history_up(self, event):
+        """Navigate up in command history"""
+        if self.command_history and self.history_index > 0:
+            self.history_index -= 1
+            self.input_var.set(self.command_history[self.history_index])
+        return 'break'
+
+    def history_down(self, event):
+        """Navigate down in command history"""
+        if self.command_history and self.history_index < len(self.command_history) - 1:
+            self.history_index += 1
+            self.input_var.set(self.command_history[self.history_index])
+        elif self.history_index == len(self.command_history) - 1:
+            self.history_index += 1
+            self.input_var.set("")
+        return 'break'
+
+    def on_key_press(self, event):
+        """Handle key presses in terminal"""
+        # Allow normal typing
+        return None
+
+    def clear_terminal(self):
+        """Clear the terminal output"""
+        self.terminal.config(state='normal')
+        self.terminal.delete('1.0', tk.END)
+        self.terminal.config(state='disabled')
+
+    def kill_process(self):
+        """Force kill the attached process"""
+        if self.process:
+            try:
+                self.process.kill()
+                self.process.wait()  # Wait for process to terminate
+                self._append("Process killed by user\n", '31')  # Red
+                # Clear command history to free memory
+                self.command_history.clear()
+                self.history_index = 0
+            except Exception as e:
+                self._append(f"Error killing process: {e}\n", '31')  # Red
+
+    def get_uptime(self):
+        """Get process uptime"""
+        if self.start_time:
+            return time.time() - self.start_time
+        return 0
+
+    def get_status(self):
+        """Get process status"""
+        if self.process:
+            if self.process.poll() is None:
+                return "Running"
+            else:
+                return f"Stopped (Exit code: {self.process.returncode})"
+        return "Not attached"
+
+# Main execution
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = LauncherGUI(root)
+    root.mainloop()
