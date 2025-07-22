@@ -2353,18 +2353,29 @@ class LauncherGUI:
         self.theme_toggle_btn = tk.Button(
             root,
             text="☀️",  # Start with sun emoji (will be updated by theme)
-            font=("Segoe UI Emoji", 12),
+            font=("Segoe UI Emoji", 14),
             command=self.toggle_theme,
-            bd=0,
-            relief="flat",
-            padx=0, pady=0,
-            height=1, width=2,
+            bd=1,
+            relief="raised",
+            padx=5, pady=2,
+            height=1, width=3,
             bg="#222222",
-            activebackground="#222222",
+            activebackground="#333333",
             fg="#ffffff",
-            activeforeground="#ffffff"
+            activeforeground="#ffffff",
+            cursor="hand2"  # Show hand cursor on hover
         )
-        self.theme_toggle_btn.place(relx=1.0, y=2, anchor="ne")
+        self.theme_toggle_btn.place(relx=1.0, y=5, anchor="ne")
+        
+        # Add hover effects
+        def on_enter(e):
+            self.theme_toggle_btn.config(relief="sunken")
+        
+        def on_leave(e):
+            self.theme_toggle_btn.config(relief="raised")
+        
+        self.theme_toggle_btn.bind("<Enter>", on_enter)
+        self.theme_toggle_btn.bind("<Leave>", on_leave)
         
         # Create bring to front button
         self.front_btn = tk.Button(
@@ -3044,8 +3055,24 @@ class LauncherGUI:
         self.start_btn.pack(side=tk.LEFT, padx=(0, 5))
         self.stop_all_btn = ttk.Button(control_frame, text="Stop All", command=self.stop_all_processes)
         self.stop_all_btn.pack(side=tk.LEFT, padx=5)
+        self.start_visible_btn = ttk.Button(control_frame, text="Start with Visible Terminals", command=self.start_processes_with_visible_terminals)
+        self.start_visible_btn.pack(side=tk.LEFT, padx=5)
         self.launch_main_btn = ttk.Button(control_frame, text="Launch Main Program", command=self.launch_main_program)
         self.launch_main_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Status labels for CPU and memory monitoring
+        status_frame = ttk.LabelFrame(main_tab, text="Process Status")
+        status_frame.pack(padx=10, pady=(0,10), fill=tk.X)
+        
+        self.ooba_status_label = ttk.Label(status_frame, text="Oobabooga: Stopped")
+        self.ooba_status_label.pack(anchor=tk.W, padx=5, pady=2)
+        
+        self.zwaifu_status_label = ttk.Label(status_frame, text="Z-Waifu: Stopped")
+        self.zwaifu_status_label.pack(anchor=tk.W, padx=5, pady=2)
+        
+        self.system_status_label = ttk.Label(status_frame, text="System: Monitoring unavailable")
+        self.system_status_label.pack(anchor=tk.W, padx=5, pady=2)
+        
         # Main log area
         log_frame = ttk.LabelFrame(main_tab, text="Log")
         log_frame.pack(padx=10, pady=(0,10), fill=tk.BOTH, expand=True)
@@ -3889,6 +3916,8 @@ class LauncherGUI:
             style.configure('TNotebook', background='#222222')
             style.configure('TNotebook.Tab', background='#333333', foreground='#ffffff')
             style.configure('TEntry', fieldbackground='#333333', foreground='#cccccc', insertcolor='#ffffff')
+            style.configure('Vertical.TScrollbar', background='#333333', troughcolor='#222222', bordercolor='#404040', arrowcolor='#ffffff')
+            style.configure('Horizontal.TScrollbar', background='#333333', troughcolor='#222222', bordercolor='#404040', arrowcolor='#ffffff')
             self.root.configure(bg='#222222')
             self.current_theme = 'dark'
             self._dark_mode = True
@@ -3907,6 +3936,10 @@ class LauncherGUI:
         
         # Apply theme to all terminal emulators
         self.apply_terminal_themes()
+        
+        # Apply theme to specific tabs
+        self.apply_advanced_tab_theme()
+        self.apply_instance_manager_tab_theme()
 
     def set_light_mode(self):
         """Apply light theme using ThemeManager"""
@@ -3926,6 +3959,8 @@ class LauncherGUI:
             style.configure('TNotebook', background='#f0f0f0')
             style.configure('TNotebook.Tab', background='#e0e0e0', foreground='#000000')
             style.configure('TEntry', fieldbackground='#ffffff', foreground='#000000', insertcolor='#000000')
+            style.configure('Vertical.TScrollbar', background='#e0e0e0', troughcolor='#f0f0f0', bordercolor='#cccccc', arrowcolor='#000000')
+            style.configure('Horizontal.TScrollbar', background='#e0e0e0', troughcolor='#f0f0f0', bordercolor='#cccccc', arrowcolor='#000000')
             self.root.configure(bg='#f0f0f0')
             self.current_theme = 'light'
             self._dark_mode = False
@@ -3942,6 +3977,10 @@ class LauncherGUI:
         
         # Apply theme to all terminal emulators
         self.apply_terminal_themes()
+        
+        # Apply theme to specific tabs
+        self.apply_advanced_tab_theme()
+        self.apply_instance_manager_tab_theme()
 
     def set_dark_mode_from_settings(self):
         """Apply dark theme from settings with enhanced feedback"""
@@ -4280,6 +4319,10 @@ class LauncherGUI:
         scrollable_frame_widget = EnhancedScrollableFrame(instance_tab)
         scrollable_frame = scrollable_frame_widget.get_scrollable_frame()
         
+        # Store for theme switching
+        self.instance_canvas = scrollable_frame_widget.canvas
+        self.instance_scrollable_frame = scrollable_frame
+        
         # Header
         header_frame = ttk.Frame(scrollable_frame)
         header_frame.pack(padx=10, pady=10, fill=tk.X)
@@ -4315,6 +4358,10 @@ class LauncherGUI:
         # Bind double-click to focus terminal
         self.instance_tree.bind('<Double-1>', self.focus_instance_terminal)
         
+        # Update the treeview theme after creation
+        if hasattr(self.instance_tree, 'update_theme'):
+            self.instance_tree.update_theme()
+        
         # Instance controls
         instance_control_frame = ttk.Frame(scrollable_frame)
         instance_control_frame.pack(padx=10, pady=(0,10), fill=tk.X)
@@ -4330,7 +4377,6 @@ class LauncherGUI:
         scrollable_frame_widget.pack(fill="both", expand=True)
         
         self.instance_manager_tab = instance_tab
-        self.style_widgets(instance_tab, '#f0f0f0', '#000000', '#ffffff', '#000000')
         
         # Update instance list
         self.update_instance_manager()
@@ -4596,6 +4642,16 @@ For more information, check the Z-Waifu documentation."""
         self.vram_usage_label = ttk.Label(vram_status_frame, text="VRAM Usage: Unknown")
         self.vram_usage_label.pack(anchor=tk.W, padx=5, pady=2)
         
+        # VRAM Progress Bar
+        vram_progress_frame = ttk.Frame(vram_status_frame)
+        vram_progress_frame.pack(fill=tk.X, padx=5, pady=2)
+        
+        ttk.Label(vram_progress_frame, text="VRAM Usage:").pack(side=tk.LEFT, padx=(0,5))
+        self.vram_progress_bar = ttk.Progressbar(vram_progress_frame, length=200, mode='determinate')
+        self.vram_progress_bar.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.vram_progress_label = ttk.Label(vram_progress_frame, text="0%")
+        self.vram_progress_label.pack(side=tk.LEFT, padx=(5,0))
+        
         # VRAM analytics display
         self.vram_analytics_label = ttk.Label(vram_status_frame, text="Analytics: Not available")
         self.vram_analytics_label.pack(anchor=tk.W, padx=5, pady=2)
@@ -4603,6 +4659,10 @@ For more information, check the Z-Waifu documentation."""
         # System health display
         self.system_health_label = ttk.Label(vram_status_frame, text="System Health: Checking...")
         self.system_health_label.pack(anchor=tk.W, padx=5, pady=2)
+        
+        # Model compatibility display
+        self.model_compatibility_label = ttk.Label(vram_status_frame, text="Model Compatibility: Checking...")
+        self.model_compatibility_label.pack(anchor=tk.W, padx=5, pady=2)
         
         # VRAM monitoring controls
         vram_control_frame = ttk.Frame(gpu_frame)
@@ -4633,6 +4693,15 @@ For more information, check the Z-Waifu documentation."""
         self.vram_gentle_cleanup_btn = ttk.Button(advanced_vram_control_frame, text="Gentle Cleanup", command=self._gentle_vram_cleanup)
         self.vram_gentle_cleanup_btn.pack(side=tk.LEFT, padx=5)
         
+        self.vram_history_btn = ttk.Button(advanced_vram_control_frame, text="View History", command=self._view_vram_history)
+        self.vram_history_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.vram_settings_btn = ttk.Button(advanced_vram_control_frame, text="Settings", command=self._open_vram_settings)
+        self.vram_settings_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.vram_compatibility_btn = ttk.Button(advanced_vram_control_frame, text="Model Compatibility", command=self._check_model_compatibility)
+        self.vram_compatibility_btn.pack(side=tk.LEFT, padx=5)
+        
         gpu_btn_frame = ttk.Frame(gpu_frame)
         gpu_btn_frame.pack(padx=5, pady=5, fill=tk.X)
         
@@ -4645,6 +4714,12 @@ For more information, check the Z-Waifu documentation."""
         # Initialize GPU status
         self._update_gpu_status()
         self._refresh_vram_status()
+        
+        # Setup VRAM progress bar styles
+        self._setup_vram_progress_styles()
+        
+        # Start periodic VRAM updates if monitoring is enabled
+        self._start_vram_updates()
         
         # Statistics Section
         stats_frame = ttk.LabelFrame(scrollable_frame, text="Real-Time Statistics")
@@ -4894,6 +4969,9 @@ For more information, check the Z-Waifu documentation."""
     def toggle_theme(self):
         """Toggle between light and dark themes with enhanced feedback and plugin marketplace support"""
         try:
+            # Debug: Print to console to verify the method is being called
+            print(f"[DEBUG] toggle_theme() called. Current dark_mode: {self._dark_mode}")
+            
             # Show switching message
             self.set_status("🔄 Switching theme...", "blue")
             self.log("[Theme] Toggling theme...")
@@ -4970,7 +5048,11 @@ For more information, check the Z-Waifu documentation."""
         if hasattr(self, 'theme_toggle_btn'):
             if self._dark_mode:
                 self.theme_toggle_btn.config(
-                    text="☀️ Switch to Light Mode"
+                    text="☀️",
+                    bg="#222222", 
+                    activebackground="#333333",
+                    fg="#ffffff", 
+                    activeforeground="#ffffff"
                 )
                 # Update front button for dark theme
                 if hasattr(self, 'front_btn'):
@@ -4980,7 +5062,11 @@ For more information, check the Z-Waifu documentation."""
                     )
             else:
                 self.theme_toggle_btn.config(
-                    text="🌙 Switch to Dark Mode"
+                    text="🌙",
+                    bg="#f0f0f0", 
+                    activebackground="#e0e0e0",
+                    fg="#000000", 
+                    activeforeground="#000000"
                 )
                 # Update front button for light theme
                 if hasattr(self, 'front_btn'):
@@ -4991,6 +5077,7 @@ For more information, check the Z-Waifu documentation."""
             
             # Force immediate update
             self.theme_toggle_btn.update_idletasks()
+            print(f"[DEBUG] Theme button updated. Dark mode: {self._dark_mode}, Text: {self.theme_toggle_btn.cget('text')}")
 
     def stop_all_processes(self):
         """Stop all running processes with proper thread synchronization"""
@@ -5101,13 +5188,13 @@ For more information, check the Z-Waifu documentation."""
         theme_frame = ttk.LabelFrame(self.main_tab, text="🎨 Theme Controls")
         theme_frame.pack(padx=10, pady=(0,10), fill=tk.X)
         
-        # Theme toggle button with icon and current status
-        self.theme_toggle_btn = ttk.Button(
+        # Theme toggle button with icon and current status (use existing button reference)
+        theme_toggle_btn_main = ttk.Button(
             theme_frame, 
             text="🌙 Switch to Dark Mode", 
             command=self.toggle_theme
         )
-        self.theme_toggle_btn.pack(side=tk.LEFT, padx=(5,10), pady=5)
+        theme_toggle_btn_main.pack(side=tk.LEFT, padx=(5,10), pady=5)
         
         # Theme editor button
         if self.theme_manager:
@@ -5127,6 +5214,13 @@ For more information, check the Z-Waifu documentation."""
         
         # Update theme button text based on current theme
         self._update_theme_button()
+        
+        # Also update the main tab theme button
+        if hasattr(self, 'theme_toggle_btn'):
+            if self._dark_mode:
+                theme_toggle_btn_main.config(text="☀️ Switch to Light Mode")
+            else:
+                theme_toggle_btn_main.config(text="🌙 Switch to Dark Mode")
         
         # Enhanced quick access buttons
         quick_access_frame = ttk.LabelFrame(self.main_tab, text="🚀 Quick Access")
@@ -5159,18 +5253,44 @@ For more information, check the Z-Waifu documentation."""
         ttk.Button(demo_frame, text="Demo Button 2").pack(side=tk.LEFT, padx=5)
 
     def update_process_status(self):
-        """Update process status periodically"""
-        # Update main process status
-        if hasattr(self, 'ooba_proc') and self.ooba_proc:
-            if self.ooba_proc.poll() is not None:
-                self.set_status("Oobabooga process stopped", "red")
-        
-        if hasattr(self, 'zwaifu_proc') and self.zwaifu_proc:
-            if self.zwaifu_proc.poll() is not None:
-                self.set_status("Z-Waifu process stopped", "red")
-        
+        """Enhanced process status update with CPU/memory monitoring"""
+        try:
+            # Update main process status with CPU/memory info
+            if hasattr(self, 'ooba_proc') and self.ooba_proc and self.ooba_proc.poll() is None:
+                try:
+                    psutil_process = psutil.Process(self.ooba_proc.pid)
+                    cpu_percent = psutil_process.cpu_percent()
+                    memory_percent = psutil_process.memory_percent()
+                    self.ooba_status_label.config(text=f"Oobabooga: Running (CPU: {cpu_percent:.1f}%, Memory: {memory_percent:.1f}%)")
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    self.ooba_status_label.config(text="Oobabooga: Running (Monitoring unavailable)")
+            else:
+                self.ooba_status_label.config(text="Oobabooga: Stopped")
+
+            if hasattr(self, 'zwaifu_proc') and self.zwaifu_proc and self.zwaifu_proc.poll() is None:
+                try:
+                    psutil_process = psutil.Process(self.zwaifu_proc.pid)
+                    cpu_percent = psutil_process.cpu_percent()
+                    memory_percent = psutil_process.memory_percent()
+                    self.zwaifu_status_label.config(text=f"Z-Waifu: Running (CPU: {cpu_percent:.1f}%, Memory: {memory_percent:.1f}%)")
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    self.zwaifu_status_label.config(text="Z-Waifu: Running (Monitoring unavailable)")
+            else:
+                self.zwaifu_status_label.config(text="Z-Waifu: Stopped")
+
+            # Update system-wide CPU and memory usage
+            try:
+                system_cpu = psutil.cpu_percent(interval=0.1)
+                system_memory = psutil.virtual_memory()
+                self.system_status_label.config(text=f"System: CPU {system_cpu:.1f}% | Memory {system_memory.percent:.1f}%")
+            except Exception as e:
+                self.system_status_label.config(text="System: Monitoring unavailable")
+
+        except Exception as e:
+            self.log(f"Error updating process status: {e}")
+
         # Schedule next update
-        self.root.after(1000, self.update_process_status)
+        self.root.after(5000, self.update_process_status)  # Update every 5 seconds
 
     def update_instance_manager(self):
         """Update instance manager periodically"""
@@ -6223,17 +6343,69 @@ For more information, check the Z-Waifu documentation."""
             # Update usage label
             if hasattr(self, 'vram_usage_label'):
                 if vram_info.get("total_vram_gb", 0) > 0:
-                    usage_text = f"VRAM Usage: {vram_info['used_vram_gb']:.1f}GB / {vram_info['total_vram_gb']:.1f}GB ({vram_info['vram_usage_percent']:.1f}%)"
+                    usage_percent = vram_info['vram_usage_percent']
+                    usage_text = f"VRAM Usage: {vram_info['used_vram_gb']:.1f}GB / {vram_info['total_vram_gb']:.1f}GB ({usage_percent:.1f}%)"
                     
-                    # Color code based on usage
-                    if vram_info['vram_usage_percent'] > 90:
-                        usage_text += " (CRITICAL)"
-                    elif vram_info['vram_usage_percent'] > 80:
-                        usage_text += " (HIGH)"
+                    # Add visual indicators based on usage
+                    if usage_percent > 90:
+                        usage_text += " 🔴 CRITICAL"
+                    elif usage_percent > 80:
+                        usage_text += " 🟠 HIGH"
+                    elif usage_percent > 60:
+                        usage_text += " 🟡 MODERATE"
+                    else:
+                        usage_text += " 🟢 GOOD"
                     
                     self.vram_usage_label.config(text=usage_text)
+                    
+                    # Add model compatibility status
+                    if hasattr(self, 'model_compatibility_label'):
+                        # Check compatibility for common model sizes
+                        total_vram = vram_info['total_vram_gb']
+                        free_vram = vram_info['free_vram_gb']
+                        
+                        # Determine what models can be run
+                        compatible_models = []
+                        if total_vram >= 7 * 1.2:  # 7B with 20% buffer
+                            compatible_models.append("7B")
+                        if total_vram >= 13 * 1.2:  # 13B with 20% buffer
+                            compatible_models.append("13B")
+                        if total_vram >= 30 * 1.2:  # 30B with 20% buffer
+                            compatible_models.append("30B")
+                        if total_vram >= 70 * 1.2:  # 70B with 20% buffer
+                            compatible_models.append("70B")
+                        
+                        if compatible_models:
+                            max_model = compatible_models[-1]
+                            if len(compatible_models) >= 2:
+                                compat_text = f"Model Compatibility: Up to {max_model} models ✅"
+                            else:
+                                compat_text = f"Model Compatibility: {max_model} models only ⚠️"
+                        else:
+                            compat_text = "Model Compatibility: No models supported ❌"
+                        
+                        self.model_compatibility_label.config(text=compat_text)
+                    
+                    # Update progress bar
+                    if hasattr(self, 'vram_progress_bar'):
+                        self.vram_progress_bar['value'] = usage_percent
+                        self.vram_progress_label.config(text=f"{usage_percent:.1f}%")
+                        
+                        # Color the progress bar based on usage
+                        if usage_percent > 90:
+                            self.vram_progress_bar['style'] = 'Critical.Horizontal.TProgressbar'
+                        elif usage_percent > 80:
+                            self.vram_progress_bar['style'] = 'High.Horizontal.TProgressbar'
+                        elif usage_percent > 60:
+                            self.vram_progress_bar['style'] = 'Moderate.Horizontal.TProgressbar'
+                        else:
+                            self.vram_progress_bar['style'] = 'Good.Horizontal.TProgressbar'
                 else:
                     self.vram_usage_label.config(text="VRAM Usage: No GPU detected")
+                    if hasattr(self, 'vram_progress_bar'):
+                        self.vram_progress_bar['value'] = 0
+                        self.vram_progress_bar['style'] = 'Default.Horizontal.TProgressbar'
+                        self.vram_progress_label.config(text="0%")
             
             # Update button states based on monitoring status
             if hasattr(self, 'vram_start_btn') and hasattr(self, 'vram_stop_btn'):
@@ -6249,10 +6421,18 @@ For more information, check the Z-Waifu documentation."""
                 self.vram_status_label.config(text=f"VRAM Status: Error - {e}")
             if hasattr(self, 'vram_usage_label'):
                 self.vram_usage_label.config(text="VRAM Usage: Error")
+            if hasattr(self, 'model_compatibility_label'):
+                self.model_compatibility_label.config(text="Model Compatibility: Error")
         
         # Update analytics and health displays
         self._update_vram_analytics_display()
         self._update_system_health_display()
+        
+        # Refresh VRAM progress styles if theme changed
+        self._refresh_vram_progress_styles()
+        
+        # Refresh VRAM progress styles if theme changed
+        self._refresh_vram_progress_styles()
     
     def _update_vram_analytics_display(self):
         """Update VRAM analytics display"""
@@ -6277,9 +6457,20 @@ For more information, check the Z-Waifu documentation."""
         """Update system health display"""
         try:
             if self.vram_monitor and hasattr(self, 'system_health_label'):
-                health_data = self.vram_monitor._check_system_health()
+                health_data = self.vram_monitor.get_latest_system_health()
                 if health_data:
-                    health_text = f"System Health: {health_data.get('health_score', 0)}/100 ({health_data.get('status', 'Unknown')})"
+                    health_score = health_data.get('health_score', 0)
+                    status = health_data.get('status', 'Unknown')
+                    
+                    # Add color coding based on health score
+                    if health_score >= 80:
+                        health_text = f"System Health: {health_score}/100 ({status}) 🟢"
+                    elif health_score >= 60:
+                        health_text = f"System Health: {health_score}/100 ({status}) 🟡"
+                    elif health_score >= 40:
+                        health_text = f"System Health: {health_score}/100 ({status}) 🟠"
+                    else:
+                        health_text = f"System Health: {health_score}/100 ({status}) 🔴"
                 else:
                     health_text = "System Health: Not available"
                 
@@ -6405,6 +6596,463 @@ For more information, check the Z-Waifu documentation."""
                 self._refresh_vram_status()
         except Exception as e:
             messagebox.showerror("Error", f"Failed to perform gentle cleanup: {e}")
+    
+    def _view_vram_history(self):
+        """View VRAM usage history in a popup window"""
+        try:
+            if self.vram_monitor:
+                history = self.vram_monitor.vram_history
+                
+                if not history:
+                    messagebox.showinfo("VRAM History", "No VRAM history available yet.")
+                    return
+                
+                # Create popup window
+                history_window = tk.Toplevel(self.root)
+                history_window.title("VRAM Usage History")
+                history_window.geometry("800x600")
+                
+                # Create frame for controls
+                control_frame = ttk.Frame(history_window)
+                control_frame.pack(fill=tk.X, padx=10, pady=5)
+                
+                ttk.Label(control_frame, text="VRAM Usage History").pack(side=tk.LEFT)
+                ttk.Button(control_frame, text="Refresh", command=lambda: self._refresh_vram_history_display(history_window)).pack(side=tk.RIGHT)
+                
+                # Create text widget with scrollbar
+                text_frame = ttk.Frame(history_window)
+                text_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+                
+                text_widget = scrolledtext.ScrolledText(text_frame, wrap=tk.WORD)
+                text_widget.pack(fill=tk.BOTH, expand=True)
+                
+                # Display history data
+                text_widget.insert(tk.END, "VRAM Usage History\n")
+                text_widget.insert(tk.END, "=" * 50 + "\n\n")
+                
+                # Show last 20 entries
+                recent_history = history[-20:] if len(history) > 20 else history
+                
+                for i, entry in enumerate(reversed(recent_history), 1):
+                    timestamp = entry.get("timestamp", "Unknown")
+                    usage_percent = entry.get("vram_usage_percent", 0)
+                    used_gb = entry.get("used_vram_gb", 0)
+                    total_gb = entry.get("total_vram_gb", 0)
+                    source = entry.get("source", "unknown")
+                    
+                    text_widget.insert(tk.END, f"{i:2d}. {timestamp}\n")
+                    text_widget.insert(tk.END, f"    Usage: {used_gb:.1f}GB / {total_gb:.1f}GB ({usage_percent:.1f}%)\n")
+                    text_widget.insert(tk.END, f"    Source: {source}\n\n")
+                
+                text_widget.config(state='disabled')
+                
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to view VRAM history: {e}")
+    
+    def _refresh_vram_history_display(self, window):
+        """Refresh the VRAM history display"""
+        try:
+            # Close and reopen the window to refresh
+            window.destroy()
+            self._view_vram_history()
+        except Exception as e:
+            print(f"Error refreshing VRAM history: {e}")
+    
+    def _open_vram_settings(self):
+        """Open VRAM monitoring settings dialog"""
+        try:
+            if not self.vram_monitor:
+                messagebox.showwarning("Warning", "VRAM monitor not available")
+                return
+            
+            # Create settings window
+            settings_window = tk.Toplevel(self.root)
+            settings_window.title("VRAM Monitoring Settings")
+            settings_window.geometry("500x600")
+            settings_window.resizable(False, False)
+            
+            # Create main frame
+            main_frame = ttk.Frame(settings_window)
+            main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            # Create notebook for organized settings
+            notebook = ttk.Notebook(main_frame)
+            notebook.pack(fill=tk.BOTH, expand=True)
+            
+            # General settings tab
+            general_frame = ttk.Frame(notebook)
+            notebook.add(general_frame, text="General")
+            
+            # Monitoring settings
+            ttk.Label(general_frame, text="Monitoring Settings", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=(10,5))
+            
+            # Check interval
+            interval_frame = ttk.Frame(general_frame)
+            interval_frame.pack(fill=tk.X, pady=2)
+            ttk.Label(interval_frame, text="Check Interval (seconds):").pack(side=tk.LEFT)
+            interval_var = tk.StringVar(value=str(self.vram_monitor.vram_settings.get("vram_check_interval", 30)))
+            interval_entry = ttk.Entry(interval_frame, textvariable=interval_var, width=10)
+            interval_entry.pack(side=tk.RIGHT)
+            
+            # Warning threshold
+            warning_frame = ttk.Frame(general_frame)
+            warning_frame.pack(fill=tk.X, pady=2)
+            ttk.Label(warning_frame, text="Warning Threshold (%):").pack(side=tk.LEFT)
+            warning_var = tk.StringVar(value=str(int(self.vram_monitor.vram_settings.get("vram_warning_threshold", 0.8) * 100)))
+            warning_entry = ttk.Entry(warning_frame, textvariable=warning_var, width=10)
+            warning_entry.pack(side=tk.RIGHT)
+            
+            # Critical threshold
+            critical_frame = ttk.Frame(general_frame)
+            critical_frame.pack(fill=tk.X, pady=2)
+            ttk.Label(critical_frame, text="Critical Threshold (%):").pack(side=tk.LEFT)
+            critical_var = tk.StringVar(value=str(int(self.vram_monitor.vram_settings.get("vram_critical_threshold", 0.95) * 100)))
+            critical_entry = ttk.Entry(critical_frame, textvariable=critical_var, width=10)
+            critical_entry.pack(side=tk.RIGHT)
+            
+            # Auto cleanup settings
+            ttk.Label(general_frame, text="Auto Cleanup Settings", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=(20,5))
+            
+            auto_cleanup_var = tk.BooleanVar(value=self.vram_monitor.vram_settings.get("auto_cleanup_enabled", True))
+            ttk.Checkbutton(general_frame, text="Enable Auto Cleanup", variable=auto_cleanup_var).pack(anchor=tk.W)
+            
+            cleanup_threshold_frame = ttk.Frame(general_frame)
+            cleanup_threshold_frame.pack(fill=tk.X, pady=2)
+            ttk.Label(cleanup_threshold_frame, text="Cleanup Threshold (%):").pack(side=tk.LEFT)
+            cleanup_var = tk.StringVar(value=str(int(self.vram_monitor.vram_settings.get("auto_cleanup_threshold", 0.9) * 100)))
+            cleanup_entry = ttk.Entry(cleanup_threshold_frame, textvariable=cleanup_var, width=10)
+            cleanup_entry.pack(side=tk.RIGHT)
+            
+            # Advanced settings tab
+            advanced_frame = ttk.Frame(notebook)
+            notebook.add(advanced_frame, text="Advanced")
+            
+            # Performance tracking
+            ttk.Label(advanced_frame, text="Performance Tracking", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=(10,5))
+            
+            perf_tracking_var = tk.BooleanVar(value=self.vram_monitor.vram_settings.get("enable_performance_tracking", True))
+            ttk.Checkbutton(advanced_frame, text="Enable Performance Tracking", variable=perf_tracking_var).pack(anchor=tk.W)
+            
+            # System health monitoring
+            health_var = tk.BooleanVar(value=self.vram_monitor.vram_settings.get("enable_system_health_monitoring", True))
+            ttk.Checkbutton(advanced_frame, text="Enable System Health Monitoring", variable=health_var).pack(anchor=tk.W)
+            
+            # Predictive cleanup
+            predictive_var = tk.BooleanVar(value=self.vram_monitor.vram_settings.get("enable_predictive_cleanup", True))
+            ttk.Checkbutton(advanced_frame, text="Enable Predictive Cleanup", variable=predictive_var).pack(anchor=tk.W)
+            
+            # Analytics
+            analytics_var = tk.BooleanVar(value=self.vram_monitor.vram_settings.get("enable_vram_analytics", True))
+            ttk.Checkbutton(advanced_frame, text="Enable VRAM Analytics", variable=analytics_var).pack(anchor=tk.W)
+            
+            # Buttons
+            button_frame = ttk.Frame(main_frame)
+            button_frame.pack(fill=tk.X, pady=(10,0))
+            
+            def save_settings():
+                try:
+                    # Update settings
+                    new_settings = {
+                        "vram_check_interval": int(interval_var.get()),
+                        "vram_warning_threshold": float(warning_var.get()) / 100,
+                        "vram_critical_threshold": float(critical_var.get()) / 100,
+                        "auto_cleanup_enabled": auto_cleanup_var.get(),
+                        "auto_cleanup_threshold": float(cleanup_var.get()) / 100,
+                        "enable_performance_tracking": perf_tracking_var.get(),
+                        "enable_system_health_monitoring": health_var.get(),
+                        "enable_predictive_cleanup": predictive_var.get(),
+                        "enable_vram_analytics": analytics_var.get()
+                    }
+                    
+                    self.vram_monitor.update_settings(new_settings)
+                    messagebox.showinfo("Success", "VRAM settings updated successfully!")
+                    settings_window.destroy()
+                    
+                except ValueError as e:
+                    messagebox.showerror("Error", f"Invalid setting value: {e}")
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to save settings: {e}")
+            
+            def reset_settings():
+                try:
+                    # Reset to defaults
+                    interval_var.set("30")
+                    warning_var.set("80")
+                    critical_var.set("95")
+                    auto_cleanup_var.set(True)
+                    cleanup_var.set("90")
+                    perf_tracking_var.set(True)
+                    health_var.set(True)
+                    predictive_var.set(True)
+                    analytics_var.set(True)
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to reset settings: {e}")
+            
+            ttk.Button(button_frame, text="Save", command=save_settings).pack(side=tk.RIGHT, padx=(5,0))
+            ttk.Button(button_frame, text="Reset to Defaults", command=reset_settings).pack(side=tk.RIGHT, padx=5)
+            ttk.Button(button_frame, text="Cancel", command=settings_window.destroy).pack(side=tk.RIGHT, padx=5)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open VRAM settings: {e}")
+    
+    def _check_model_compatibility(self):
+        """Check model compatibility with current VRAM"""
+        try:
+            if not self.vram_monitor:
+                messagebox.showwarning("Warning", "VRAM monitor not available")
+                return
+            
+            # Create compatibility window
+            compat_window = tk.Toplevel(self.root)
+            compat_window.title("Model VRAM Compatibility Checker")
+            compat_window.geometry("600x500")
+            
+            # Create main frame
+            main_frame = ttk.Frame(compat_window)
+            main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            
+            # Current VRAM status
+            current_vram = self.vram_monitor.get_vram_info()
+            ttk.Label(main_frame, text="Current VRAM Status", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=(0,5))
+            
+            if current_vram.get("total_vram_gb", 0) > 0:
+                status_text = f"Total VRAM: {current_vram['total_vram_gb']:.1f}GB\n"
+                status_text += f"Available VRAM: {current_vram['free_vram_gb']:.1f}GB\n"
+                status_text += f"Usage: {current_vram['vram_usage_percent']:.1f}%"
+            else:
+                status_text = "No GPU detected"
+            
+            status_label = ttk.Label(main_frame, text=status_text, font=("Arial", 10))
+            status_label.pack(anchor=tk.W, pady=(0,20))
+            
+            # Model input section
+            ttk.Label(main_frame, text="Check Model Compatibility", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=(0,5))
+            
+            input_frame = ttk.Frame(main_frame)
+            input_frame.pack(fill=tk.X, pady=(0,10))
+            
+            ttk.Label(input_frame, text="Model Name:").pack(side=tk.LEFT)
+            model_var = tk.StringVar()
+            model_entry = ttk.Entry(input_frame, textvariable=model_var, width=30)
+            model_entry.pack(side=tk.LEFT, padx=(5,10))
+            
+            ttk.Label(input_frame, text="Size (GB):").pack(side=tk.LEFT)
+            size_var = tk.StringVar()
+            size_entry = ttk.Entry(input_frame, textvariable=size_var, width=10)
+            size_entry.pack(side=tk.LEFT, padx=(5,0))
+            
+            # Quick model buttons
+            quick_frame = ttk.Frame(main_frame)
+            quick_frame.pack(fill=tk.X, pady=(0,10))
+            
+            ttk.Label(quick_frame, text="Quick Check:").pack(side=tk.LEFT)
+            
+            def quick_check(model_name, size_gb):
+                model_var.set(model_name)
+                size_var.set(str(size_gb))
+                check_compatibility()
+            
+            ttk.Button(quick_frame, text="7B Model", command=lambda: quick_check("7B Model", 7)).pack(side=tk.LEFT, padx=5)
+            ttk.Button(quick_frame, text="13B Model", command=lambda: quick_check("13B Model", 13)).pack(side=tk.LEFT, padx=5)
+            ttk.Button(quick_frame, text="30B Model", command=lambda: quick_check("30B Model", 30)).pack(side=tk.LEFT, padx=5)
+            ttk.Button(quick_frame, text="70B Model", command=lambda: quick_check("70B Model", 70)).pack(side=tk.LEFT, padx=5)
+            
+            # Check button
+            ttk.Button(main_frame, text="Check Compatibility", command=lambda: check_compatibility()).pack(anchor=tk.W, pady=(0,10))
+            
+            # Results area
+            ttk.Label(main_frame, text="Compatibility Results", font=("Arial", 12, "bold")).pack(anchor=tk.W, pady=(0,5))
+            
+            results_text = scrolledtext.ScrolledText(main_frame, height=15, wrap=tk.WORD)
+            results_text.pack(fill=tk.BOTH, expand=True)
+            
+            def check_compatibility():
+                try:
+                    model_name = model_var.get().strip()
+                    size_str = size_var.get().strip()
+                    
+                    if not model_name:
+                        messagebox.showwarning("Warning", "Please enter a model name")
+                        return
+                    
+                    size_gb = None
+                    if size_str:
+                        try:
+                            size_gb = float(size_str)
+                        except ValueError:
+                            messagebox.showerror("Error", "Invalid size value")
+                            return
+                    
+                    # Check compatibility
+                    result = self.vram_monitor.get_model_compatibility(model_name, size_gb)
+                    
+                    # Display results
+                    results_text.delete(1.0, tk.END)
+                    results_text.insert(tk.END, "Model Compatibility Check\n")
+                    results_text.insert(tk.END, "=" * 40 + "\n\n")
+                    
+                    if "error" in result:
+                        results_text.insert(tk.END, f"Error: {result['error']}\n")
+                    else:
+                        # Enhanced display with new compatibility logic
+                        results_text.insert(tk.END, f"Model: {result['model_name']}\n")
+                        results_text.insert(tk.END, f"Estimated Size: {result['estimated_size_gb']:.1f}GB\n")
+                        results_text.insert(tk.END, f"Required VRAM (with 20% buffer): {result['required_vram_gb']:.1f}GB\n")
+                        results_text.insert(tk.END, f"Total GPU VRAM: {result['total_vram_gb']:.1f}GB\n")
+                        results_text.insert(tk.END, f"Free VRAM: {result['free_vram_gb']:.1f}GB\n")
+                        results_text.insert(tk.END, f"Safety Margin: {result['safety_margin_gb']:.1f}GB\n\n")
+                        
+                        # Enhanced compatibility status
+                        if result['compatible']:
+                            if result.get('has_comfortable_space', False):
+                                results_text.insert(tk.END, "✅ COMPATIBLE - Optimal\n")
+                                results_text.insert(tk.END, "   Model can be loaded with comfortable VRAM space\n")
+                            else:
+                                results_text.insert(tk.END, "⚠️  COMPATIBLE - Tight Fit\n")
+                                results_text.insert(tk.END, "   Model can be loaded but consider VRAM cleanup\n")
+                        else:
+                            results_text.insert(tk.END, "❌ NOT COMPATIBLE - Insufficient VRAM\n")
+                            results_text.insert(tk.END, "   Model requires more VRAM than available\n")
+                        
+                        results_text.insert(tk.END, f"\nRecommendation: {result['recommendation']}\n")
+                        
+                        # Additional helpful information
+                        if result['compatible']:
+                            if not result.get('has_comfortable_space', False):
+                                results_text.insert(tk.END, "\n💡 Tips for tight VRAM situations:\n")
+                                results_text.insert(tk.END, "   • Close other GPU applications\n")
+                                results_text.insert(tk.END, "   • Use the 'Gentle VRAM Cleanup' button\n")
+                                results_text.insert(tk.END, "   • Consider using a smaller model\n")
+                        else:
+                            results_text.insert(tk.END, "\n💡 Suggestions:\n")
+                            results_text.insert(tk.END, "   • Try a smaller model (7B instead of 13B)\n")
+                            results_text.insert(tk.END, "   • Consider upgrading your GPU\n")
+                            results_text.insert(tk.END, "   • Use model quantization techniques\n")
+                    
+                    results_text.config(state='disabled')
+                    
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to check compatibility: {e}")
+            
+            # Focus on model entry
+            model_entry.focus()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open model compatibility checker: {e}")
+    
+    def _setup_vram_progress_styles(self):
+        """Setup VRAM progress bar styles with theme awareness"""
+        try:
+            style = ttk.Style()
+            
+            # Get current theme colors
+            current_theme = self.get_current_theme_colors()
+            bg_color = current_theme.get('bg', '#222222')
+            fg_color = current_theme.get('fg', '#ffffff')
+            
+            # Determine if we're in dark mode
+            is_dark_mode = self.is_dark_mode_active()
+            
+            # Set trough color based on theme
+            trough_color = '#E0E0E0' if not is_dark_mode else '#444444'
+            
+            # Good usage style (green) - theme-aware
+            style.configure('Good.Horizontal.TProgressbar', 
+                          background='#4CAF50', 
+                          troughcolor=trough_color,
+                          bordercolor='#4CAF50',
+                          lightcolor='#4CAF50',
+                          darkcolor='#4CAF50')
+            
+            # Moderate usage style (yellow) - theme-aware
+            style.configure('Moderate.Horizontal.TProgressbar', 
+                          background='#FF9800', 
+                          troughcolor=trough_color,
+                          bordercolor='#FF9800',
+                          lightcolor='#FF9800',
+                          darkcolor='#FF9800')
+            
+            # High usage style (orange) - theme-aware
+            style.configure('High.Horizontal.TProgressbar', 
+                          background='#FF5722', 
+                          troughcolor=trough_color,
+                          bordercolor='#FF5722',
+                          lightcolor='#FF5722',
+                          darkcolor='#FF5722')
+            
+            # Critical usage style (red) - theme-aware
+            style.configure('Critical.Horizontal.TProgressbar', 
+                          background='#F44336', 
+                          troughcolor=trough_color,
+                          bordercolor='#F44336',
+                          lightcolor='#F44336',
+                          darkcolor='#F44336')
+            
+            # Default style for when no specific style is set
+            style.configure('Default.Horizontal.TProgressbar',
+                          background='#2196F3',
+                          troughcolor=trough_color,
+                          bordercolor='#2196F3',
+                          lightcolor='#2196F3',
+                          darkcolor='#2196F3')
+            
+        except Exception as e:
+            print(f"Failed to setup VRAM progress styles: {e}")
+    
+    def is_dark_mode_active(self):
+        """Check if dark mode is currently active"""
+        try:
+            # Check if we have a current theme setting
+            if hasattr(self, 'current_theme'):
+                return self.current_theme == 'dark'
+            
+            # Fallback: check if we're using dark theme colors
+            current_theme = self.get_current_theme_colors()
+            bg_color = current_theme.get('bg', '#222222')
+            
+            # Simple heuristic: if background is dark, assume dark mode
+            if bg_color.startswith('#') and len(bg_color) == 7:
+                # Convert hex to RGB and check if it's dark
+                r = int(bg_color[1:3], 16)
+                g = int(bg_color[3:5], 16)
+                b = int(bg_color[5:7], 16)
+                # If average RGB is less than 128, consider it dark
+                return (r + g + b) / 3 < 128
+            
+            return False
+        except Exception:
+            return False
+    
+    def _refresh_vram_progress_styles(self):
+        """Refresh VRAM progress bar styles when theme changes"""
+        try:
+            # Only refresh if VRAM progress bar exists
+            if hasattr(self, 'vram_progress_bar'):
+                # Re-setup the styles with current theme
+                self._setup_vram_progress_styles()
+                
+                # Re-apply the current style to the progress bar
+                current_style = self.vram_progress_bar.cget('style')
+                if current_style:
+                    self.vram_progress_bar['style'] = current_style
+        except Exception as e:
+            print(f"Failed to refresh VRAM progress styles: {e}")
+    
+    def _start_vram_updates(self):
+        """Start periodic VRAM status updates"""
+        def update_vram_periodic():
+            try:
+                if self.vram_monitor and self.vram_monitor.monitoring:
+                    self._refresh_vram_status()
+                # Schedule next update in 5 seconds
+                self.root.after(5000, update_vram_periodic)
+            except Exception as e:
+                print(f"Error in periodic VRAM update: {e}")
+                # Continue updates even if there's an error
+                self.root.after(5000, update_vram_periodic)
+        
+        # Start the periodic updates
+        update_vram_periodic()
     
     def _update_gpu_status(self):
         """Update GPU status without clearing cache"""
@@ -6611,6 +7259,9 @@ For more information, check the Z-Waifu documentation."""
                 self.ooba_status_var.set(f"Running instances: {running_count}")
             else:
                 self.ooba_status_var.set("No instances running")
+            
+            # Force UI update
+            self.root.update_idletasks()
 
     def refresh_zwaifu_status(self):
         """Refresh Z-Waifu status"""
@@ -6626,29 +7277,107 @@ For more information, check the Z-Waifu documentation."""
                 self.zwaifu_status_var.set(f"Running instances: {running_count}")
             else:
                 self.zwaifu_status_var.set("No instances running")
+            
+            # Force UI update
+            self.root.update_idletasks()
     
     def stop_all_instances(self, process_type):
         """Stop all instances of a specific process type"""
-        if process_type in self.process_instance_tabs:
-            stopped_count = 0
-            for instance in self.process_instance_tabs[process_type]:
-                if instance['proc'] and instance['proc'].poll() is None:
-                    try:
-                        instance['proc'].terminate()
-                        stopped_count += 1
-                    except Exception as e:
-                        self.log(f"Error stopping {process_type} instance: {e}")
+        try:
+            # Normalize process type for case-insensitive matching
+            process_type_lower = process_type.lower()
+            process_type_mapped = None
             
-            self.log(f"Stopped {stopped_count} {process_type} instances")
+            # Map lowercase to proper case
+            if process_type_lower == "oobabooga":
+                process_type_mapped = "Oobabooga"
+            elif process_type_lower == "zwaifu":
+                process_type_mapped = "Z-Waifu"
+            elif process_type_lower == "ollama":
+                process_type_mapped = "Ollama"
+            elif process_type_lower == "rvc":
+                process_type_mapped = "RVC"
+            else:
+                # For unknown types, try to map common variations
+                if "ooba" in process_type_lower:
+                    process_type_mapped = "Oobabooga"
+                elif "zwaif" in process_type_lower:
+                    process_type_mapped = "Z-Waifu"
+                elif "ollam" in process_type_lower:
+                    process_type_mapped = "Ollama"
+                elif "rvc" in process_type_lower:
+                    process_type_mapped = "RVC"
+                else:
+                    process_type_mapped = process_type.title()
             
-            # Refresh status
-            if process_type == "oobabooga":
-                self.refresh_ooba_status()
-            elif process_type == "zwaifu":
-                self.refresh_zwaifu_status()
+            if process_type_mapped in self.process_instance_tabs:
+                stopped_count = 0
+                instances_to_remove = []
+                
+                for instance in self.process_instance_tabs[process_type_mapped]:
+                    if instance['proc'] and instance['proc'].poll() is None:
+                        try:
+                            self.log(f"Stopping {process_type_mapped} instance {instance.get('instance_num', 'Unknown')}...")
+                            
+                            # Try graceful termination first
+                            instance['proc'].terminate()
+                            
+                            # Wait for process to terminate (up to 5 seconds)
+                            try:
+                                instance['proc'].wait(timeout=5)
+                                self.log(f"✅ {process_type_mapped} instance {instance.get('instance_num', 'Unknown')} stopped gracefully")
+                            except subprocess.TimeoutExpired:
+                                # Force kill if terminate doesn't work
+                                self.log(f"⚠️ Force killing {process_type_mapped} instance {instance.get('instance_num', 'Unknown')}...")
+                                instance['proc'].kill()
+                                try:
+                                    instance['proc'].wait(timeout=2)
+                                except subprocess.TimeoutExpired:
+                                    pass  # Process will be cleaned up by OS
+                            
+                            stopped_count += 1
+                            instances_to_remove.append(instance)
+                            
+                        except Exception as e:
+                            self.log(f"❌ Error stopping {process_type_mapped} instance: {e}")
+                
+                # Remove stopped instances from tracking
+                for instance in instances_to_remove:
+                    if instance in self.process_instance_tabs[process_type_mapped]:
+                        self.process_instance_tabs[process_type_mapped].remove(instance)
+                        
+                        # Remove the tab from the notebook
+                        tab_text = f"{process_type_mapped} Instance {instance.get('instance_num', 'Unknown')}"
+                        for i, tab in enumerate(self.notebook.tabs()):
+                            if self.notebook.tab(tab, "text") == tab_text:
+                                try:
+                                    self.notebook.forget(tab)
+                                except:
+                                    pass  # Tab might already be removed
+                                break
+                
+                self.log(f"✅ Stopped {stopped_count} {process_type_mapped} instances")
+                
+                # Update instance manager
+                self.update_instance_manager()
+                
+                # Refresh status based on process type
+                if process_type_lower == "oobabooga":
+                    self.refresh_ooba_status()
+                elif process_type_lower == "zwaifu":
+                    self.refresh_zwaifu_status()
+                
+                return stopped_count
+            else:
+                self.log(f"⚠️ No {process_type_mapped} instances found to stop")
+                return 0
+                
+        except Exception as e:
+            self.log(f"❌ Error in stop_all_instances for {process_type}: {e}")
+            return 0
     
     def start_process_instance(self, process_type):
-        """Start a new instance of the specified process type, with terminal tab and max 5 limit"""
+        """Start a new instance of the specified process type, with visible terminal tab and enhanced monitoring"""
         try:
             # Determine batch path and tab label
             if process_type == "oobabooga":
@@ -6688,54 +7417,72 @@ For more information, check the Z-Waifu documentation."""
             tab_id = self.notebook.index('end') - 1
             self.notebook.select(instance_tab)
             self.flash_tab(tab_id, tab_label)
+            
+            # Create enhanced terminal with CPU/memory monitoring
             terminal = TerminalEmulator(instance_tab)
             terminal.pack(fill=tk.BOTH, expand=True)
             self.restyle_all_tabs()  # Ensure new tab is themed
 
-            # Start process with enhanced output capture
+            # Start process with visible terminal and enhanced monitoring
             try:
+                # Use CREATE_NEW_CONSOLE to make the terminal visible
                 proc = subprocess.Popen(
                     [bat_path],
                     cwd=os.path.dirname(bat_path),
                     shell=True,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,  # Separate stderr for better capture
+                    stderr=subprocess.PIPE,
                     text=True,
                     bufsize=1,
                     encoding='utf-8',
-                    errors='replace'
+                    errors='replace',
+                    creationflags=subprocess.CREATE_NEW_CONSOLE  # Make terminal visible
                 )
+                
+                # Attach process to terminal with enhanced monitoring
                 terminal.attach_process(proc, bat_path)
+                
+                # Start CPU/memory monitoring for this process
+                self._start_process_monitoring(proc, tab_label, instance_num)
+                
                 self.log(f"🚀 {tab_label} instance launched: {bat_path}")
                 self.set_status(f"✅ {tab_label} instance started successfully!", "green")
+                
                 instance_info = {
                     'tab': instance_tab,
                     'terminal': terminal,
                     'proc': proc,
-                    'bat_path': bat_path
+                    'bat_path': bat_path,
+                    'instance_num': instance_num,
+                    'monitoring_active': True
                 }
                 instances.append(instance_info)
 
                 # Add tab close logic on process exit
                 def on_process_exit():
+                    # Stop monitoring
+                    instance_info['monitoring_active'] = False
+                    
                     # Remove tab and instance from tracking
                     if instance_info in self.process_instance_tabs[tab_label]:
                         idx = self.process_instance_tabs[tab_label].index(instance_info)
                         self.process_instance_tabs[tab_label].pop(idx)
                         # Remove tab from notebook
                         for i, tab in enumerate(self.notebook.tabs()):
-                            if self.notebook.tab(tab, "text") == f"{tab_label} Instance {idx+1}":
+                            if self.notebook.tab(tab, "text") == f"{tab_label} Instance {instance_num}":
                                 if tab in self.notebook.tabs():
                                     self.notebook.forget(tab)
                                 break
                         self.update_instance_manager()
+                
                 # Start a watcher thread for process exit
                 def watcher():
                     proc.wait()
                     self.root.after(0, on_process_exit)
                 import threading
                 threading.Thread(target=watcher, daemon=True).start()
+                
             except Exception as e:
                 terminal._append(f"[ERROR] Failed to start {tab_label}: {e}\n", '31')
                 self.log(f"[ERROR] Failed to start {tab_label}: {e}")
@@ -6743,6 +7490,76 @@ For more information, check the Z-Waifu documentation."""
                 self.notebook.forget(instance_tab)
         except Exception as e:
             self.log(f"Error starting process instance: {e}")
+
+    def _start_process_monitoring(self, process, process_name, instance_num):
+        """Start CPU and memory monitoring for a specific process"""
+        def monitor_process():
+            try:
+                while process.poll() is None:  # While process is running
+                    try:
+                        # Get process info using psutil
+                        psutil_process = psutil.Process(process.pid)
+                        cpu_percent = psutil_process.cpu_percent(interval=1.0)
+                        memory_info = psutil_process.memory_info()
+                        memory_percent = psutil_process.memory_percent()
+                        
+                        # Update terminal with monitoring info
+                        monitoring_text = f"[MONITOR] CPU: {cpu_percent:.1f}% | Memory: {memory_percent:.1f}% | RAM: {memory_info.rss / 1024 / 1024:.1f} MB\n"
+                        
+                        # Find the terminal for this process
+                        for instance in self.process_instance_tabs.get(process_name, []):
+                            if instance['proc'] == process:
+                                instance['terminal']._append(monitoring_text, '36')  # Cyan color
+                                break
+                        
+                        # Record metrics in analytics if available
+                        if hasattr(self, 'analytics') and self.analytics:
+                            self.analytics.record_process_metrics(f"{process_name}_Instance_{instance_num}", cpu_percent, memory_percent)
+                        
+                        time.sleep(5)  # Update every 5 seconds
+                        
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        break  # Process no longer exists or access denied
+                    except Exception as e:
+                        self.log(f"Error monitoring {process_name} Instance {instance_num}: {e}")
+                        break
+                        
+            except Exception as e:
+                self.log(f"Process monitoring thread error for {process_name} Instance {instance_num}: {e}")
+        
+        # Start monitoring in a separate thread
+        threading.Thread(target=monitor_process, daemon=True).start()
+
+    def start_processes_with_visible_terminals(self):
+        """Start both Oobabooga and Z-Waifu in visible terminal tabs after restart"""
+        try:
+            # Check if batch files are set
+            if not self.ooba_bat or not os.path.exists(self.ooba_bat):
+                messagebox.showerror("Error", "Oobabooga batch file not set! Please browse and select it in Settings.")
+                return
+            if not self.zwaifu_bat or not os.path.exists(self.zwaifu_bat):
+                messagebox.showerror("Error", "Z-Waifu batch file not set! Please browse and select it in Settings.")
+                return
+            
+            # Stop any existing processes first
+            self.stop_all_processes()
+            time.sleep(2)  # Give processes time to stop
+            
+            # Start Oobabooga in visible terminal
+            self.start_process_instance("oobabooga")
+            
+            # Wait a moment before starting Z-Waifu
+            time.sleep(3)
+            
+            # Start Z-Waifu in visible terminal
+            self.start_process_instance("zwaifu")
+            
+            self.set_status("✅ Both processes started in visible terminals!", "green")
+            self.log("✅ Processes started in visible terminals after restart")
+            
+        except Exception as e:
+            self.log(f"Error starting processes with visible terminals: {e}")
+            messagebox.showerror("Error", f"Failed to start processes: {e}")
 
     # Update stop/restart/kill_instance to remove tab and instance dict entry
     def stop_instance(self, process_name, instance_id):
@@ -7027,6 +7844,7 @@ For more information, check the Z-Waifu documentation."""
         self.apply_plugin_manager_theme()
         self.apply_terminal_themes()
         self.apply_advanced_tab_theme()
+        self.apply_instance_manager_tab_theme()
 
     def apply_terminal_themes(self):
         """Apply current theme to all terminal instances"""
@@ -7070,6 +7888,130 @@ For more information, check the Z-Waifu documentation."""
             
         except Exception as e:
             self.log(f"Failed to update advanced tab theme: {e}")
+
+    def apply_instance_manager_tab_theme(self):
+        """Apply theme to instance manager tab specifically"""
+        try:
+            if hasattr(self, 'instance_canvas') and self.instance_canvas:
+                if self._dark_mode:
+                    self.instance_canvas.config(bg='#1e1e2e')
+                    self.instance_scrollable_frame.config(bg='#1e1e2e')
+                else:
+                    self.instance_canvas.config(bg='#fafafa')
+                    self.instance_scrollable_frame.config(bg='#fafafa')
+            
+            # Apply theme to instance tree
+            if hasattr(self, 'instance_tree'):
+                self._theme_treeview_widget(self.instance_tree)
+                # Update the enhanced treeview's internal theme
+                if hasattr(self.instance_tree, 'update_theme'):
+                    self.instance_tree.update_theme()
+            
+            # Apply theme to all child widgets in the instance manager tab
+            if hasattr(self, 'instance_manager_tab'):
+                self._theme_instance_manager_widgets(self.instance_manager_tab)
+            
+            # Apply theme to the treeview container frame specifically
+            if hasattr(self, 'instance_tree'):
+                # Find the parent frame of the treeview (created by create_enhanced_treeview)
+                tree_parent = self.instance_tree.master
+                if tree_parent:
+                    if self._dark_mode:
+                        tree_parent.config(bg='#1e1e2e')
+                    else:
+                        tree_parent.config(bg='#fafafa')
+                    
+                    # Also theme any scrollbars in the treeview frame
+                    for child in tree_parent.winfo_children():
+                        if isinstance(child, ttk.Scrollbar):
+                            # The scrollbar styles are already configured globally
+                            # Just ensure the scrollbar uses the correct theme
+                            pass
+            
+            self.log("Instance Manager tab theme updated")
+            
+        except Exception as e:
+            self.log(f"Failed to update instance manager tab theme: {e}")
+
+    def _theme_instance_manager_widgets(self, parent):
+        """Recursively theme all widgets in the instance manager tab"""
+        try:
+            for child in parent.winfo_children():
+                cls = child.__class__.__name__
+                
+                # Handle different widget types
+                if cls in ['Label', 'Checkbutton', 'Button', 'Frame', 'Labelframe']:
+                    try:
+                        if self._dark_mode:
+                            child.config(bg='#1e1e2e', fg='#cdd6f4')
+                        else:
+                            child.config(bg='#fafafa', fg='#2d3748')
+                    except Exception:
+                        pass
+                elif cls == 'Canvas':
+                    try:
+                        if self._dark_mode:
+                            child.config(bg='#1e1e2e', highlightbackground='#45475a')
+                        else:
+                            child.config(bg='#fafafa', highlightbackground='#e2e8f0')
+                    except Exception:
+                        pass
+                elif cls == 'Scrollbar':
+                    try:
+                        if self._dark_mode:
+                            child.config(troughcolor='#313244', bg='#1e1e2e', activebackground='#89b4fa')
+                        else:
+                            child.config(troughcolor='#ffffff', bg='#fafafa', activebackground='#3182ce')
+                    except Exception:
+                        pass
+                elif cls == 'Entry':
+                    try:
+                        if self._dark_mode:
+                            child.config(bg='#313244', fg='#cdd6f4', insertbackground='#cdd6f4')
+                        else:
+                            child.config(bg='#ffffff', fg='#2d3748', insertbackground='#2d3748')
+                    except Exception:
+                        pass
+                elif cls in ['Text', 'ScrolledText', 'Listbox']:
+                    try:
+                        if self._dark_mode:
+                            child.config(bg='#313244', fg='#cdd6f4', insertbackground='#cdd6f4')
+                        else:
+                            child.config(bg='#ffffff', fg='#2d3748', insertbackground='#2d3748')
+                    except Exception:
+                        pass
+                elif cls == 'Radiobutton':
+                    try:
+                        if self._dark_mode:
+                            child.config(bg='#1e1e2e', fg='#cdd6f4', selectcolor='#313244')
+                        else:
+                            child.config(bg='#fafafa', fg='#2d3748', selectcolor='#ffffff')
+                    except Exception:
+                        pass
+                elif cls == 'Scale':
+                    try:
+                        if self._dark_mode:
+                            child.config(bg='#1e1e2e', fg='#cdd6f4', troughcolor='#313244')
+                        else:
+                            child.config(bg='#fafafa', fg='#2d3748', troughcolor='#ffffff')
+                    except Exception:
+                        pass
+                elif cls == 'Spinbox':
+                    try:
+                        if self._dark_mode:
+                            child.config(bg='#313244', fg='#cdd6f4', insertbackground='#cdd6f4')
+                        else:
+                            child.config(bg='#ffffff', fg='#2d3748', insertbackground='#2d3748')
+                    except Exception:
+                        pass
+                
+                # Recursively theme children
+                if hasattr(child, 'winfo_children') and child.winfo_children():
+                    self._theme_instance_manager_widgets(child)
+                    
+        except Exception as e:
+            # Silently continue if any widget can't be themed
+            pass
 
     def _theme_advanced_text_widgets(self, parent):
         """Recursively theme all text widgets in the advanced features tab"""
@@ -7130,6 +8072,53 @@ For more information, check the Z-Waifu documentation."""
                     fg='#000000',
                     selectbackground='#0078d4',
                     selectforeground='#ffffff'
+                )
+        except Exception as e:
+            # Silently continue if widget can't be themed
+            pass
+
+    def _theme_treeview_widget(self, treeview_widget):
+        """Apply theme to a treeview widget"""
+        try:
+            if self._dark_mode:
+                # Configure treeview style for dark mode
+                style = ttk.Style()
+                style.configure("Treeview",
+                    background='#313244',
+                    foreground='#cdd6f4',
+                    fieldbackground='#313244',
+                    bordercolor='#45475a',
+                    rowheight=25
+                )
+                style.map("Treeview",
+                    background=[('selected', '#89b4fa')],
+                    foreground=[('selected', '#1e1e2e')]
+                )
+                # Configure treeview headings for dark mode
+                style.configure("Treeview.Heading",
+                    background='#1e1e2e',
+                    foreground='#cdd6f4',
+                    bordercolor='#45475a'
+                )
+            else:
+                # Configure treeview style for light mode
+                style = ttk.Style()
+                style.configure("Treeview",
+                    background='#ffffff',
+                    foreground='#2d3748',
+                    fieldbackground='#ffffff',
+                    bordercolor='#e2e8f0',
+                    rowheight=25
+                )
+                style.map("Treeview",
+                    background=[('selected', '#3182ce')],
+                    foreground=[('selected', '#ffffff')]
+                )
+                # Configure treeview headings for light mode
+                style.configure("Treeview.Heading",
+                    background='#fafafa',
+                    foreground='#2d3748',
+                    bordercolor='#e2e8f0'
                 )
         except Exception as e:
             # Silently continue if widget can't be themed
@@ -8252,6 +9241,9 @@ class TerminalEmulator(tk.Frame):
         self.last_cleanup_time = time.time()
         self.cleanup_interval = 0.5
         
+        # Initial population tracking
+        self.initial_population_complete = False
+        
         # Create main terminal frame
         self.create_terminal_interface()
         
@@ -8456,6 +9448,12 @@ class TerminalEmulator(tk.Frame):
         """Attach a process to this terminal"""
         self.process = process
         self.start_time = time.time()
+        
+        # Reset state for new process
+        self.line_count = 0
+        self.initial_population_complete = False
+        self.output_buffer.clear()
+        
         self._append(f"Process started: {command}\n", '32')  # Green
         
         # Start reading process output with enhanced capture
@@ -8507,6 +9505,10 @@ class TerminalEmulator(tk.Frame):
                     # Update line count
                     self.line_count += 1
                     
+                    # Mark initial population as complete after first line
+                    if self.line_count == 1:
+                        self.initial_population_complete = True
+                    
                     # Log if enabled
                     if self.logging_enabled and self.output_log_file:
                         self._log_line(processed_line, stream_type)
@@ -8539,6 +9541,10 @@ class TerminalEmulator(tk.Frame):
 
     def _should_display_line(self, line):
         """Check if line should be displayed based on filters"""
+        # Allow initial population - only apply filters after initial population is complete
+        if not self.initial_population_complete:
+            return True
+        
         # Error filter
         if self.show_only_errors and 'error' not in line.lower() and '[err]' not in line.lower():
             return False
@@ -8652,15 +9658,26 @@ class TerminalEmulator(tk.Frame):
         """Toggle output logging"""
         self.logging_enabled = self.logging_var.get()
 
+    def reset_initial_population(self):
+        """Reset initial population state to allow all lines to show again"""
+        self.initial_population_complete = False
+        self._refresh_display()
+
     def _refresh_display(self):
         """Refresh terminal display with current filters"""
         try:
             self.terminal.config(state='normal')
             self.terminal.delete('1.0', tk.END)
             
-            for entry in self.output_buffer:
-                if self._should_display_line(entry['line']):
+            # If initial population is not complete, show all lines
+            if not self.initial_population_complete:
+                for entry in self.output_buffer:
                     self.terminal.insert(tk.END, entry['line'])
+            else:
+                # Apply filters after initial population
+                for entry in self.output_buffer:
+                    if self._should_display_line(entry['line']):
+                        self.terminal.insert(tk.END, entry['line'])
             
             self.terminal.see(tk.END)
             self.terminal.config(state='disabled')

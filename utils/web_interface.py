@@ -543,12 +543,33 @@ class WebInterface:
         }}
         
         function stopAllInstances(processType) {{
+            // Disable button to prevent multiple clicks
+            const button = event.target;
+            const originalText = button.textContent;
+            button.disabled = true;
+            button.textContent = 'Stopping...';
+            
             fetch(`/api/stop_all/${{processType}}`, {{method: 'POST'}})
                 .then(response => response.json())
                 .then(data => {{
                     if (data.success) {{
+                        button.textContent = 'Stopped!';
                         setTimeout(() => location.reload(), 1000);
+                    }} else {{
+                        button.textContent = 'Failed!';
+                        setTimeout(() => {{
+                            button.disabled = false;
+                            button.textContent = originalText;
+                        }}, 2000);
                     }}
+                }})
+                .catch(error => {{
+                    console.error('Error stopping instances:', error);
+                    button.textContent = 'Error!';
+                    setTimeout(() => {{
+                        button.disabled = false;
+                        button.textContent = originalText;
+                    }}, 2000);
                 }});
         }}
         
@@ -724,8 +745,13 @@ class WebInterface:
         """Stop all instances of a process type"""
         try:
             if hasattr(self.launcher_gui, 'stop_all_instances'):
-                self.launcher_gui.stop_all_instances(process_type)
-                return True
+                stopped_count = self.launcher_gui.stop_all_instances(process_type)
+                if stopped_count > 0:
+                    self.launcher_gui.log(f"Successfully stopped {stopped_count} {process_type} instances")
+                    return True
+                else:
+                    self.launcher_gui.log(f"No {process_type} instances were running to stop")
+                    return True  # Still return True as this is not an error
             else:
                 self.launcher_gui.log(f"Launcher GUI does not support stopping all {process_type} instances")
                 return False

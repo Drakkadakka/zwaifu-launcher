@@ -43,8 +43,8 @@ class EnhancedTreeview(ttk.Treeview):
         self._last_selection = None
         self._highlight_tag = 'highlighted'
         
-        # Configure highlight tag
-        self.tag_configure(self._highlight_tag, background='#0078d4', foreground='white')
+        # Configure highlight tag with theme-aware colors
+        self._configure_highlight_tag()
     
     def _on_single_click(self, event):
         """Handle single-click selection"""
@@ -70,11 +70,11 @@ class EnhancedTreeview(ttk.Treeview):
         try:
             # Determine scroll direction and amount
             if platform.system() == "Windows":
-                delta = int(event.delta / 120)
+                delta = -int(event.delta / 120)  # Invert direction for Windows
             elif event.num == 4:  # Linux scroll up
-                delta = -1
+                delta = 1  # Scroll down when wheel goes up
             elif event.num == 5:  # Linux scroll down
-                delta = 1
+                delta = -1  # Scroll up when wheel goes down
             else:
                 delta = 0
             
@@ -147,21 +147,85 @@ class EnhancedTreeview(ttk.Treeview):
         try:
             # Remove highlight from previous selection
             if self._last_selection:
-                self.tag_remove(self._highlight_tag, self._last_selection)
+                # Get current tags for the item
+                current_tags = self.item(self._last_selection, 'tags')
+                if current_tags:
+                    # Remove the highlight tag if it exists
+                    new_tags = tuple(tag for tag in current_tags if tag != self._highlight_tag)
+                    self.item(self._last_selection, tags=new_tags)
             
             # Add highlight to current selection
             current_selection = self.selection()
             if current_selection:
                 self._last_selection = current_selection[0]
-                self.tag_add(self._highlight_tag, self._last_selection)
+                # Get current tags and add highlight tag
+                current_tags = self.item(self._last_selection, 'tags')
+                if current_tags:
+                    new_tags = current_tags + (self._highlight_tag,)
+                else:
+                    new_tags = (self._highlight_tag,)
+                self.item(self._last_selection, tags=new_tags)
         except Exception as e:
             print(f"Error in selection change handler: {e}")
+    
+    def _configure_highlight_tag(self):
+        """Configure highlight tag with theme-aware colors"""
+        try:
+            # Try to detect dark mode by checking the widget's background color
+            # Get the current style configuration
+            style = ttk.Style()
+            treeview_bg = style.lookup('Treeview', 'background')
+            
+            # If we can't get the style, try to detect from the widget itself
+            if not treeview_bg:
+                try:
+                    treeview_bg = self.cget('background')
+                except:
+                    treeview_bg = None
+            
+            # Determine if we're in dark mode based on background color
+            is_dark_mode = False
+            if treeview_bg:
+                # Convert hex to RGB and check if it's dark
+                if treeview_bg.startswith('#'):
+                    # Simple heuristic: if the hex value is dark, assume dark mode
+                    hex_color = treeview_bg.lstrip('#')
+                    if len(hex_color) == 6:
+                        r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+                        # Calculate perceived brightness
+                        brightness = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+                        is_dark_mode = brightness < 0.5
+            
+            # Set appropriate colors based on detected theme
+            if is_dark_mode:
+                # Dark mode colors
+                highlight_bg = '#89b4fa'  # Light blue for dark mode
+                highlight_fg = '#1e1e2e'  # Dark text for light background
+            else:
+                # Light mode colors
+                highlight_bg = '#0078d4'  # Blue for light mode
+                highlight_fg = '#ffffff'  # White text for dark background
+            
+            # Configure the highlight tag
+            self.tag_configure(self._highlight_tag, background=highlight_bg, foreground=highlight_fg)
+            
+        except Exception as e:
+            # Fallback to default colors if detection fails
+            self.tag_configure(self._highlight_tag, background='#0078d4', foreground='white')
+    
+    def update_theme(self):
+        """Update the highlight tag colors when theme changes"""
+        self._configure_highlight_tag()
     
     def clear_selection(self):
         """Clear selection and remove highlighting"""
         self.selection_remove(self.selection())
         if self._last_selection:
-            self.tag_remove(self._highlight_tag, self._last_selection)
+            # Remove highlight tag from the item
+            current_tags = self.item(self._last_selection, 'tags')
+            if current_tags:
+                new_tags = tuple(tag for tag in current_tags if tag != self._highlight_tag)
+                self.item(self._last_selection, tags=new_tags)
             self._last_selection = None
 
 
@@ -222,11 +286,11 @@ class EnhancedListbox(tk.Listbox):
         try:
             # Determine scroll direction and amount
             if platform.system() == "Windows":
-                delta = int(event.delta / 120)
+                delta = -int(event.delta / 120)  # Invert direction for Windows
             elif event.num == 4:  # Linux scroll up
-                delta = -1
+                delta = 1  # Scroll down when wheel goes up
             elif event.num == 5:  # Linux scroll down
-                delta = 1
+                delta = -1  # Scroll up when wheel goes down
             else:
                 delta = 0
             
@@ -346,11 +410,11 @@ class EnhancedScrollableFrame(tk.Frame):
         try:
             # Determine scroll direction and amount
             if platform.system() == "Windows":
-                delta = int(event.delta / 120)
+                delta = -int(event.delta / 120)  # Invert direction for Windows
             elif event.num == 4:  # Linux scroll up
-                delta = -1
+                delta = 1  # Scroll down when wheel goes up
             elif event.num == 5:  # Linux scroll down
-                delta = 1
+                delta = -1  # Scroll up when wheel goes down
             else:
                 delta = 0
             
@@ -382,6 +446,10 @@ def create_enhanced_treeview(parent, **kwargs):
     # Pack treeview and scrollbar
     treeview.pack(side="left", fill="both", expand=True)
     scrollbar.pack(side="right", fill="y")
+    
+    # Store references for theming
+    frame.treeview = treeview
+    frame.scrollbar = scrollbar
     
     return frame, treeview
 
@@ -421,11 +489,11 @@ def _handle_mousewheel(event, widget):
     try:
         # Determine scroll direction and amount
         if platform.system() == "Windows":
-            delta = int(event.delta / 120)
+            delta = -int(event.delta / 120)  # Invert direction for Windows
         elif event.num == 4:  # Linux scroll up
-            delta = -1
+            delta = 1  # Scroll down when wheel goes up
         elif event.num == 5:  # Linux scroll down
-            delta = 1
+            delta = -1  # Scroll up when wheel goes down
         else:
             delta = 0
         

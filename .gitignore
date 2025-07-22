@@ -59,3 +59,12 @@ models/
 # Generated files
 mobile_qr.png
 launcher_icon.png
+
+# Releases
+*.rar
+result
+result-*
+
+# Nix
+.direnv
+!flake.lock

@@ -1,0 +1,88 @@
+{
+  "export_timestamp": "2025-07-17T01:45:02.116044",
+  "vram_history": [
+    {
+      "timestamp": "2025-07-17T01:44:49.113677",
+      "source": "gputil",
+      "total_vram_gb": 15.9921875,
+      "used_vram_gb": 3.083984375,
+      "free_vram_gb": 12.603515625,
+      "vram_usage_percent": 19.284318514899855,
+      "available_sources": [
+        "gputil",
+        "nvidia_smi"
+      ],
+      "gpu_name": "NVIDIA GeForce RTX 4070 Ti SUPER",
+      "gpu_load": 35.0
+    },
+    {
+      "timestamp": "2025-07-17T01:44:56.114674",
+      "source": "gputil",
+      "total_vram_gb": 15.9921875,
+      "used_vram_gb": 3.0556640625,
+      "free_vram_gb": 12.6318359375,
+      "vram_usage_percent": 19.107230092818757,
+      "available_sources": [
+        "gputil",
+        "nvidia_smi"
+      ],
+      "gpu_name": "NVIDIA GeForce RTX 4070 Ti SUPER",
+      "gpu_load": 39.0
+    }
+  ],
+  "performance_data": [],
+  "system_health_data": [
+    {
+      "timestamp": "2025-07-17T01:44:47.017069",
+      "health_score": 100,
+      "vram_usage": 0,
+      "cpu_usage": 23.2,
+      "memory_usage": 50.2,
+      "status": "Excellent"
+    },
+    {
+      "timestamp": "2025-07-17T01:44:49.272606",
+      "health_score": 100,
+      "vram_usage": 19.284318514899855,
+      "cpu_usage": 20.0,
+      "memory_usage": 50.2,
+      "status": "Excellent"
+    },
+    {
+      "timestamp": "2025-07-17T01:44:56.280139",
+      "health_score": 100,
+      "vram_usage": 19.107230092818757,
+      "cpu_usage": 34.2,
+      "memory_usage": 50.2,
+      "status": "Excellent"
+    }
+  ],
+  "cleanup_history": [],
+  "analytics": {
+    "timestamp": "2025-07-17T01:45:02.116044",
+    "summary": {
+      "total_readings": 2,
+      "average_usage": 19.195774303859306,
+      "max_usage": 19.284318514899855,
+      "min_usage": 19.107230092818757,
+      "current_usage": 19.107230092818757,
+      "usage_trend": "decreasing"
+    },
+    "trends": {
+      "error": "Insufficient data for trend analysis"
+    },
+    "performance": {
+      "error": "No performance data available"
+    },
+    "health": {
+      "total_health_readings": 3,
+      "average_health_score": 100.0,
+      "current_health_score": 100,
+      "health_trend": "stable",
+      "health_status": "Excellent"
+    },
+    "cleanup_history": {
+      "error": "No cleanup history available"
+    }
+  }
+}

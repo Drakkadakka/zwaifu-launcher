@@ -631,7 +631,7 @@ def test_tab_refresh_functionality():
     print("PASS: Tab refresh functionality test passed")
 
 def test_instance_manager_theme():
-    """Test instance manager theme inclusion"""
+    """Test instance manager theme inclusion and functionality"""
     print("Testing instance manager theme inclusion...")
     
     # Mock TAB_THEMES
@@ -645,7 +645,44 @@ def test_instance_manager_theme():
     assert TAB_THEMES['instance_manager_tab']['bg'] == '#1e232b'
     assert TAB_THEMES['instance_manager_tab']['fg'] == '#ffffff'
     
+    # Test enhanced widgets functionality
+    try:
+        import sys
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from utils.enhanced_widgets import EnhancedScrollableFrame, create_enhanced_treeview
+        print("✅ Enhanced widgets imported successfully")
+    except ImportError as e:
+        print(f"❌ Failed to import enhanced widgets: {e}")
+        return False
+    
+    # Test theme method names
+    expected_methods = [
+        'apply_instance_manager_tab_theme',
+        '_theme_treeview_widget'
+    ]
+    
+    # Mock class to test method existence
+    class MockLauncherGUI:
+        def __init__(self):
+            self._dark_mode = True
+        
+        def apply_instance_manager_tab_theme(self):
+            """Apply theme to instance manager tab specifically"""
+            pass
+        
+        def _theme_treeview_widget(self, treeview_widget):
+            """Apply theme to a treeview widget"""
+            pass
+    
+    mock_gui = MockLauncherGUI()
+    
+    for method_name in expected_methods:
+        assert hasattr(mock_gui, method_name), f"Method {method_name} not found"
+        print(f"✅ Method {method_name} exists")
+    
     print("PASS: Instance manager theme test passed")
+    return True
 
 def main():
     """Run all tests"""

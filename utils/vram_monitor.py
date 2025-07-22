@@ -30,6 +30,10 @@ class VRAMMonitor:
         self.last_notification_time = 0
         self.notification_cooldown = 300  # 5 minutes
         
+        # Performance tracking variables
+        self.performance_tracking_enabled = False
+        self.last_performance_check = 0
+        
         # Load VRAM settings
         self.vram_settings = self._load_vram_settings()
         
@@ -211,7 +215,7 @@ class VRAMMonitor:
                 "timestamp": datetime.now().isoformat(),
                 "cpu_percent": psutil.cpu_percent(interval=1),
                 "memory_percent": psutil.virtual_memory().percent,
-                "disk_percent": psutil.disk_usage('/').percent,
+                "disk_percent": psutil.disk_usage('C:\\').percent if platform.system() == "Windows" else psutil.disk_usage('/').percent,
                 "vram_info": self.last_vram_info.copy() if self.last_vram_info else {}
             }
             
@@ -223,13 +227,15 @@ class VRAMMonitor:
             
             self._log_vram_event("performance", "Performance tracking completed", performance_data)
             
+        except ImportError:
+            print("psutil not available, performance tracking disabled")
         except Exception as e:
             print(f"Failed to track performance: {e}")
     
     def _check_system_health(self):
         """Check system health if enabled"""
         if not self.vram_settings.get("enable_system_health_monitoring", True):
-            return
+            return None
         
         try:
             import psutil
@@ -284,6 +290,30 @@ class VRAMMonitor:
             
             self._log_vram_event("health", f"System health check: {health_score}/100", health_data)
             
+            return health_data
+            
+        except ImportError:
+            print("psutil not available, system health monitoring disabled")
+            # Return a basic health check based only on VRAM
+            vram_usage = self.last_vram_info.get("vram_usage_percent", 0)
+            health_score = 100
+            if vram_usage > 90:
+                health_score -= 30
+            elif vram_usage > 80:
+                health_score -= 15
+            elif vram_usage > 70:
+                health_score -= 5
+            
+            health_data = {
+                "timestamp": datetime.now().isoformat(),
+                "health_score": health_score,
+                "vram_usage": vram_usage,
+                "cpu_usage": 0,
+                "memory_usage": 0,
+                "status": self._get_health_status(health_score)
+            }
+            
+            self.system_health_data.append(health_data)
             return health_data
             
         except Exception as e:
@@ -736,6 +766,10 @@ class VRAMMonitor:
         
         return cleanup_results
     
+    def force_vram_cleanup(self) -> dict:
+        """Alias for force_cleanup for compatibility with GUI calls."""
+        return self.force_cleanup()
+    
     def _cleanup_cuda(self) -> bool:
         """Cleanup CUDA memory"""
         try:
@@ -818,6 +852,14 @@ class VRAMMonitor:
             "last_cleanup": self.cleanup_history[-1] if self.cleanup_history else None,
             "cleanup_count": len(self.cleanup_history)
         }
+    
+    def get_latest_system_health(self) -> Dict[str, Any]:
+        """Get the latest system health data"""
+        if self.system_health_data:
+            return self.system_health_data[-1]
+        else:
+            # Return a default health check if no data available
+            return self._check_system_health()
     
     def update_settings(self, new_settings: Dict[str, Any]):
         """Update VRAM monitoring settings"""
@@ -1041,7 +1083,14 @@ class VRAMMonitor:
             return {"error": "Model compatibility checking disabled"}
         
         try:
-            current_vram = self.last_vram_info.get("free_vram_gb", 0)
+            # Get current VRAM info if last_vram_info is not available
+            if not self.last_vram_info or self.last_vram_info.get("total_vram_gb", 0) == 0:
+                current_vram_info = self.get_vram_info()
+                total_vram = current_vram_info.get("total_vram_gb", 0)
+                free_vram = current_vram_info.get("free_vram_gb", 0)
+            else:
+                total_vram = self.last_vram_info.get("total_vram_gb", 0)
+                free_vram = self.last_vram_info.get("free_vram_gb", 0)
             
             # Estimate VRAM requirement if not provided
             if model_size_gb is None:
@@ -1057,20 +1106,51 @@ class VRAMMonitor:
                 else:
                     model_size_gb = 7  # Default assumption
             
-            # Add buffer for model loading
-            required_vram = model_size_gb * 1.2  # 20% buffer
+            # More realistic VRAM requirements for different model types
+            # These are based on actual usage patterns and optimization techniques
+            if "7b" in model_name.lower() or model_size_gb <= 7:
+                # 7B models typically need 8-10GB with optimizations
+                required_vram = 10
+            elif "13b" in model_name.lower() or model_size_gb <= 13:
+                # 13B models typically need 12-14GB with optimizations
+                required_vram = 14
+            elif "30b" in model_name.lower() or model_size_gb <= 30:
+                # 30B models typically need 24-28GB
+                required_vram = 28
+            elif "70b" in model_name.lower() or model_size_gb <= 70:
+                # 70B models typically need 48-56GB
+                required_vram = 56
+            else:
+                # Default: model size + 50% buffer
+                required_vram = model_size_gb * 1.5
             
-            compatible = current_vram >= required_vram
-            safety_margin = current_vram - required_vram
+            # Check if model can fit in total VRAM
+            compatible = total_vram >= required_vram
+            safety_margin = total_vram - required_vram
+            
+            # Additional check: ensure we have enough free VRAM for comfortable loading
+            comfortable_free_vram = required_vram * 0.3  # 30% of model size as free space
+            has_comfortable_space = free_vram >= comfortable_free_vram
+            
+            # Determine recommendation based on compatibility and comfort
+            if compatible and has_comfortable_space:
+                recommendation = "Compatible - Optimal"
+            elif compatible and not has_comfortable_space:
+                recommendation = "Compatible - Tight fit (consider cleanup)"
+            else:
+                recommendation = "Insufficient VRAM"
             
             result = {
                 "model_name": model_name,
                 "estimated_size_gb": model_size_gb,
                 "required_vram_gb": required_vram,
-                "available_vram_gb": current_vram,
+                "total_vram_gb": total_vram,
+                "free_vram_gb": free_vram,
                 "compatible": compatible,
+                "has_comfortable_space": has_comfortable_space,
                 "safety_margin_gb": safety_margin,
-                "recommendation": "Compatible" if compatible else "Insufficient VRAM"
+                "comfortable_free_vram_gb": comfortable_free_vram,
+                "recommendation": recommendation
             }
             
             # Cache the result
