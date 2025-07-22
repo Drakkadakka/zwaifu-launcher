@@ -87,7 +87,7 @@ python zwaifu_launcher_gui.py
    python zwaifu_launcher_gui.py
    ```
 
-## 🆕 What's New in v1.1.0
+## 🆕 What's New in v1.0.0
 
 ### ✅ **Bug Fixes & Improvements**
 - **Fixed Unicode decode errors** in configuration loading
